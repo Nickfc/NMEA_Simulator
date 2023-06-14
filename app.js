@@ -122,14 +122,24 @@ function generateNMEASentence(point, currentTime) {
   const time = currentTime
     ? new Date(currentTime).toISOString().split(".")[0].replace("T", "").replace(/-/g, "").replace(/:/g, "").slice(-6) + "." + String(Math.floor(currentTime % 1000 / 10)).padStart(2, "0")
     : "000000.00";
-  const lat = point.lat.toFixed(7).replace(".", "");
-  const lon = point.lon.toFixed(7).replace(".", "");
+
+  const lat = convertToNMEACoordinate(point.lat, true);
+  const lon = convertToNMEACoordinate(point.lon, false);
   const ele = point.ele.toFixed(2);
 
   const nmeaString = `$GPGGA,${time},${lat},N,${lon},E,1,05,2.87,${ele},M,00.000,M,,`;
 
   const checksum = calculateChecksum(nmeaString);
   return nmeaString + "*" + checksum.toString(16).toUpperCase();
+}
+
+function convertToNMEACoordinate(coordinate, isLatitude) {
+  const degrees = Math.floor(Math.abs(coordinate));
+  const minutes = (Math.abs(coordinate) - degrees) * 60;
+
+  let result = degrees.toString().padStart(isLatitude ? 2 : 3, "0") + minutes.toFixed(7);
+  
+  return result;
 }
 
 function calculateChecksum(nmeaString) {
@@ -165,7 +175,7 @@ async function handlePlay() {
       ? (totalRouteTime * 1000) / processedRoutePoints.length
       : 1000;
 
-    const animationUpdateRate = updateRate / parseFloat(frequencyInput.value);
+    const animationUpdateRate = updateRate;
 
     for (; animationIndex < processedRoutePoints.length - 1; animationIndex++) {
       if (animationState !== "playing") break;
@@ -178,11 +188,11 @@ async function handlePlay() {
 
       speedDisplay.textContent = `Speed: ${startPoint.speed.toFixed(2)} km/h`;
 
-      await new Promise((resolve) => setTimeout(resolve, animationUpdateRate / animationPlaybackRate));
+      await new Promise((resolve) => setTimeout(resolve, animationUpdateRate / (animationPlaybackRate * parseFloat(frequencyInput.value))));
 
       bearingDisplay.textContent = `Bearing: ${calculateBearing(startPoint, endPoint).toFixed(2)}°`;
 
-      const elapsedTime = animationIndex * updateRate * parseFloat(frequencyInput.value);
+      const elapsedTime = animationIndex * animationUpdateRate / parseFloat(frequencyInput.value);
       timeDisplay.textContent = `Time: ${new Date(startTime.getTime() + elapsedTime).toLocaleTimeString()}`;
 
       visualization.markerLayer.removeLayer(marker);
