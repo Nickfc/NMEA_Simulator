@@ -134,11 +134,18 @@ function generateNMEASentence(point, currentTime) {
 }
 
 function convertToNMEACoordinate(coordinate, isLatitude) {
-  const degrees = Math.floor(Math.abs(coordinate));
-  const minutes = (Math.abs(coordinate) - degrees) * 60;
-
-  let result = degrees.toString().padStart(isLatitude ? 2 : 3, "0") + minutes.toFixed(7);
+  const degrees = Math.abs(coordinate);
+  let result = degrees.toFixed(7);
   
+  // Pad the result with leading zeros
+  if (isLatitude) {
+    // Latitude should be 2 digits before the decimal
+    result = result.padStart(9, '0');
+  } else {
+    // Longitude should be 3 digits before the decimal
+    result = result.padStart(10, '0');
+  }
+
   return result;
 }
 
