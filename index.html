@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NMEA Data Generator</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+  <link rel="stylesheet" href="styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Raleway&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+  <div class="progress-container">
+    <progress id="progressBar" value="0"></progress>
+  </div>
+  <div id="sidebar">
+    <h1>NMEA Data Generator</h1>
+    <div class="file-input">
+      <div class="group">
+        <h3>Upload File</h3>
+        <label for="file">Upload GPX or KML file:</label>
+        <input type="file" id="file" accept=".gpx,.kml" />
+      </div>
+      <hr>
+      <div class="group">
+        <h3>Route Settings</h3>
+        <label for="vehicleType">Vehicle type:</label>
+        <select id="vehicleType">
+          <option value="car">Car</option>
+          <option value="bicycle">Bicycle</option>
+          <option value="motorcycle">Motorcycle</option>
+          <option value="truck">Truck</option>
+          <option value="electricVehicle">Electric Vehicle</option>
+          <option value="walking">Walking</option>
+          <option value="electricScooter">Electric Scooter</option>
+          <option value="bus">Bus</option>
+          <option value="van">Van</option>
+          <option value="heavyTruck">Heavy Truck</option>
+          <option value="moped">Moped</option>
+          <option value="skateboard">Skateboard</option>
+          <option value="wheelchair">Wheelchair</option>
+          <option value="segway">Segway</option>
+          <option value="tram">Tram</option>
+        </select>
+        <label for="totalRouteTime">Total route time (minutes):</label>
+        <input type="number" id="totalRouteTime" min="1" step="1" value="60" />
+        <label for="frequency">Frequency (points per second):</label>
+        <input type="number" id="frequency" min="0.1" step="0.1" value="1" />
+		<label for="speedOrTime">Choose speed or time:</label>
+<select id="speedOrTime">
+  <option value="topSpeed">Top Speed</option>
+  <option value="routeTime">Route Time</option>
+</select>
+        <label for="startTime">Starting time:</label>
+        <input type="datetime-local" id="startTime" />
+      </div>
+      <hr>
+      <div class="group">
+        <h3>Conditions & Behavior</h3>
+        <label for="roadConditions">Road conditions:</label>
+        <select id="roadConditions">
+          <option value="dry">Dry</option>
+          <option value="wet">Wet</option>
+          <option value="icy">Icy</option>
+          <option value="gravel">Gravel</option>
+        </select>
+        <label for="weatherConditions">Weather conditions:</label>
+        <select id="weatherConditions">
+          <option value="clear">Clear</option>
+          <option value="rain">Rain</option>
+          <option value="snow">Snow</option>
+          <option value="fog">Fog</option>
+        </select>
+        <label for="driverBehavior">Driver behavior:</label>
+        <select id="driverBehavior">
+          <option value="aggressive">Aggressive</option>
+          <option value="normal">Normal</option>
+          <option value="conservative">Conservative</option>
+        </select>
+      </div>
+      <hr>
+      <div class="group">
+        <h3>Animation Settings</h3>
+        <label for="animationPlaybackRate">Animation Playback Rate:</label>
+        <input type="range" id="animationPlaybackRate" min="0.1" max="5" step="0.1" value="1" />
+      </div>
+      <hr>
+      <div class="group">
+        <h3>Route Display</h3>
+        <div>
+          <label>Route:</label>
+          <input type="checkbox" id="routeToggle" checked />
+        </div>
+        <div>
+          <label>Markers:</label>
+          <input type="checkbox" id="markersToggle" />
+        </div>
+        <div>
+          <label>Original Markers:</label>
+          <input type="checkbox" id="originalMarkersToggle" />
+        </div>
+      </div>
+      <hr>
+      <button id="generateNMEA" class="generate-button">Generate NMEA Data</button>
+      <button id="clearRouteButton" class="generate-button">Clear Route</button>
+     <button id="downloadNMEA" class="generate-button" disabled>Download NMEA Data</button>
+      <div id="output"></div>
+    </div>
+  </div>
+  <div id="map" class="map"></div>
+  <div id="hud">
+    <span id="speedDisplay" class="hud-item"></span>
+    <span id="bearingDisplay" class="hud-item"></span>
+    <span id="timeDisplay" class="hud-item"></span>
+  </div>
+<div id="sub-hud">
+  <span id="totalDistanceDisplay" class="hud-item"></span>
+  <span id="estimatedTimeDisplay" class="hud-item"></span>
+</div>
+    <div id="control-buttons">
+    <button id="play" class="control-button" title="Play"><i class="fas fa-play"></i></button>
+    <button id="pause" class="control-button" title="Pause"><i class="fas fa-pause"></i></button>
+    <button id="stop" class="control-button" title="Stop"><i class="fas fa-stop"></i></button>
+  </div>
+  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+  <script src="conversion.js"></script>
+  <script src="customization.js"></script>
+  <script src="physics_engine.js"></script>
+  <script src="integration.js"></script>
+  <script src="visualization.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
