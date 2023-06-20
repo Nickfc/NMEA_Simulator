@@ -46,11 +46,11 @@
         <input type="number" id="totalRouteTime" min="1" step="1" value="60" />
         <label for="frequency">Frequency (points per second):</label>
         <input type="number" id="frequency" min="0.1" step="0.1" value="1" />
-		<label for="speedOrTime">Choose speed or time:</label>
-<select id="speedOrTime">
-  <option value="topSpeed">Top Speed</option>
-  <option value="routeTime">Route Time</option>
-</select>
+        <label for="speedOrTime">Choose speed or time:</label>
+        <select id="speedOrTime">
+          <option value="topSpeed">Top Speed</option>
+          <option value="routeTime">Route Time</option>
+        </select>
         <label for="startTime">Starting time:</label>
         <input type="datetime-local" id="startTime" />
       </div>
@@ -85,25 +85,11 @@
         <input type="range" id="animationPlaybackRate" min="0.1" max="5" step="0.1" value="1" />
       </div>
       <hr>
-      <div class="group">
-        <h3>Route Display</h3>
-        <div>
-          <label>Route:</label>
-          <input type="checkbox" id="routeToggle" checked />
-        </div>
-        <div>
-          <label>Markers:</label>
-          <input type="checkbox" id="markersToggle" />
-        </div>
-        <div>
-          <label>Original Markers:</label>
-          <input type="checkbox" id="originalMarkersToggle" />
-        </div>
-      </div>
-      <hr>
       <button id="generateNMEA" class="generate-button">Generate NMEA Data</button>
       <button id="clearRouteButton" class="generate-button">Clear Route</button>
-     <button id="downloadNMEA" class="generate-button" disabled>Download NMEA Data</button>
+      <button id="downloadNMEA" class="generate-button" disabled>Download NMEA Data</button>
+      <button id="downloadCSV" class="generate-button" disabled>Download CSV Data ECEF</button>
+      <button id="downloadCSVAlt" class="generate-button" disabled>Download CSV Data with Altitude ECEF</button>
       <div id="output"></div>
     </div>
   </div>
