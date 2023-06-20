@@ -31,10 +31,6 @@ playButton.addEventListener("click", handlePlay, false);
 pauseButton.addEventListener("click", handlePause, false);
 stopButton.addEventListener("click", handleStop, false);
 
-routeToggle.addEventListener("change", handleRouteToggle, false);
-markersToggle.addEventListener("change", handleMarkersToggle, false);
-originalMarkersToggle.addEventListener("change", handleOriginalMarkersToggle, false);
-
 animationPlaybackRateInput.addEventListener("input", handleAnimationPlaybackRateChange, false);
 
 const conversion = new Conversion();
@@ -98,6 +94,8 @@ async function handleGenerateNMEA() {
   }
 
   downloadNMEAButton.disabled = false;
+  downloadCSVButton.disabled = false;
+  downloadCSVAltButton.disabled = false;
 }
 
 function handleDownloadNMEA() {
@@ -116,6 +114,43 @@ function handleDownloadNMEA() {
   link.download = "nmea_data.txt";
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function handleDownloadCSV(includeAltitude = false) {
+  const csvData = [];
+  let currentTime = 0;
+  conversion.routePoints.forEach((point) => {
+    const time = currentTime / 1000; // Convert to seconds
+    const ecefCoords = latLonAltToECEF(point.lat, point.lon, point.alt || 0);
+    const data = `${time},${ecefCoords.x.toFixed(3)},${ecefCoords.y.toFixed(3)},${ecefCoords.z.toFixed(3)}`;
+    csvData.push(data);
+    currentTime += parseFloat(totalRouteTimeInput.value) * 60 * 1000 / conversion.routePoints.length;
+  });
+
+  const blob = new Blob([csvData.join("\n")], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "data.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function latLonAltToECEF(lat, lon, alt) {
+  const a = 6378137;  // semi-major axis
+  const f = 1/298.257223563;  // flattening
+  const e2 = 2*f - f*f;  // eccentricity^2
+  const sinLat = Math.sin(lat * Math.PI / 180);
+  const cosLat = Math.cos(lat * Math.PI / 180);
+  const sinLon = Math.sin(lon * Math.PI / 180);
+  const cosLon = Math.cos(lon * Math.PI / 180);
+  const N = a / Math.sqrt(1 - e2 * sinLat * sinLat);
+
+  return {
+    x: (N + alt) * cosLat * cosLon,
+    y: (N + alt) * cosLat * sinLon,
+    z: (N * (1 - e2) + alt) * sinLat
+  };
 }
 
 function generateNMEASentence(point, currentTime) {
@@ -260,3 +295,9 @@ function calculateBearing(point1, point2) {
 
   return (bearing + 360) % 360;
 }
+
+const downloadCSVButton = document.getElementById("downloadCSV");
+const downloadCSVAltButton = document.getElementById("downloadCSVAlt");
+
+downloadCSVButton.addEventListener("click", () => handleDownloadCSV(false), false);
+downloadCSVAltButton.addEventListener("click", () => handleDownloadCSV(true), false);
