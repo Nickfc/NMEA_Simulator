@@ -71,6 +71,10 @@ let cachedNMEAData = null;
 // Routed coordinates (the detailed path from OSRM)
 let routedCoordinates = null;
 
+// Environment data from OSRM + Overpass (snapped to route)
+let routeEnvironmentData = null;
+let snappedEnvironment = null;
+
 // Loop state – tracks whether a loop is active so we can regenerate on drag
 let loopActive = false;
 let loopDragDebounce = null;
@@ -268,14 +272,25 @@ async function handleRouteWaypoints() {
     showRouteStatus("Need at least 2 waypoints to route", "error");
     return;
   }
-  showRouteStatus('<i class="fas fa-spinner fa-spin"></i> Routing…', "loading");
+  showRouteStatus('<i class="fas fa-spinner fa-spin"></i> Routing & enriching…', "loading");
   try {
     const result = await routePlanner.route(coords);
     routedCoordinates = result.coordinates;
+    routeEnvironmentData = result.environmentData || null;
+
+    // Snap real-world data to route points
+    if (routeEnvironmentData) {
+      snappedEnvironment = RoutePlanner.snapEnvironmentToRoute(routedCoordinates, routeEnvironmentData);
+    } else {
+      snappedEnvironment = null;
+    }
+
     mapIntegration.drawRoute(routedCoordinates);
-    // Feed routed coordinates into conversion for NMEA generation
     conversion.routePoints = routedCoordinates.map((c) => ({ lat: c.lat, lon: c.lon, ele: c.ele || 0 }));
-    showRouteStatus(`<i class="fas fa-check"></i> ${result.distanceKm.toFixed(1)} km — ${formatDuration(result.durationSec)}`, "success");
+
+    const src = routeEnvironmentData ? routeEnvironmentData.source : "basic";
+    const badge = src === "osrm+overpass" ? "🛰️ OSM+OSRM" : src === "osrm" ? "🛰️ OSRM" : "📐 Geometry";
+    showRouteStatus(`<i class="fas fa-check"></i> ${result.distanceKm.toFixed(1)} km — ${formatDuration(result.durationSec)}  <span class="data-badge">${badge}</span>`, "success");
   } catch (err) {
     showRouteStatus(`<i class="fas fa-exclamation-triangle"></i> ${err.message}`, "error");
   }
@@ -306,11 +321,22 @@ async function handleGenerateLoop() {
   try {
     const result = await routePlanner.closedLoop(start, targetKm, opts);
     routedCoordinates = result.coordinates;
+    routeEnvironmentData = result.environmentData || null;
+
+    if (routeEnvironmentData) {
+      snappedEnvironment = RoutePlanner.snapEnvironmentToRoute(routedCoordinates, routeEnvironmentData);
+    } else {
+      snappedEnvironment = null;
+    }
+
     mapIntegration.drawRoute(routedCoordinates);
     conversion.routePoints = routedCoordinates.map((c) => ({ lat: c.lat, lon: c.lon, ele: c.ele || 0 }));
     loopActive = true;
     regenerateLoopBtn.disabled = false;
-    showRouteStatus(`<i class="fas fa-check"></i> Loop: ${result.distanceKm.toFixed(1)} km — ${formatDuration(result.durationSec)}`, "success");
+
+    const src = routeEnvironmentData ? routeEnvironmentData.source : "basic";
+    const badge = src === "osrm+overpass" ? "🛰️ OSM+OSRM" : src === "osrm" ? "🛰️ OSRM" : "📐 Geometry";
+    showRouteStatus(`<i class="fas fa-check"></i> Loop: ${result.distanceKm.toFixed(1)} km — ${formatDuration(result.durationSec)}  <span class="data-badge">${badge}</span>`, "success");
   } catch (err) {
     showRouteStatus(`<i class="fas fa-exclamation-triangle"></i> ${err.message}`, "error");
   }
@@ -357,6 +383,8 @@ function handleClearAll() {
   cachedProcessedRoutePoints = null;
   cachedNMEAData = null;
   routedCoordinates = null;
+  routeEnvironmentData = null;
+  snappedEnvironment = null;
   loopActive = false;
   regenerateLoopBtn.disabled = true;
   conversion.routePoints = [];
@@ -398,6 +426,7 @@ async function handleGenerateNMEA() {
     {
       roadType: roadTypeSelect.value,
       trafficDensity: trafficDensitySelect.value,
+      snappedEnv: snappedEnvironment,
     }
   );
 
@@ -529,6 +558,7 @@ function handlePlay() {
       {
         roadType: roadTypeSelect.value,
         trafficDensity: trafficDensitySelect.value,
+        snappedEnv: snappedEnvironment,
       }
     );
 
@@ -571,7 +601,9 @@ function handlePlay() {
         if (speedLimitDisplay) speedLimitDisplay.textContent = point.speedLimit ? `${Math.round(point.speedLimit)} km/h` : '—';
         if (roadTypeDisplay) {
           const rt = point.roadType;
-          roadTypeDisplay.textContent = rt ? rt.charAt(0).toUpperCase() + rt.slice(1) : '—';
+          const src = point.roadSource;
+          const icon = src === "overpass" ? "🛰️" : src === "osrm" ? "📡" : "📐";
+          roadTypeDisplay.textContent = rt ? `${icon} ${rt.charAt(0).toUpperCase() + rt.slice(1)}` : '—';
         }
         animationIndex++;
       }

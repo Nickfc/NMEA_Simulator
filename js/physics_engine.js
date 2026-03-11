@@ -1,24 +1,25 @@
 /* ═══════════════════════════════════════════════════════════════
-   PhysicsEngine v4 – environment-aware vehicle dynamics simulation
+   PhysicsEngine v5 – real-data + environment-aware vehicle dynamics
    ═══════════════════════════════════════════════════════════════
 
-   v4 adds environment awareness:
-     ⓐ Road-type classification – auto-detect highway / urban / residential /
-        rural from route geometry, or accept user override
-     ⓑ Per-segment speed limits – realistic caps per road type
-     ⓒ Traffic lights & stop signs – probabilistic stops at detected
-        intersections based on traffic density setting
+   v5 integrates real-world map data:
+     ⓐ Layered data sources: Overpass API → OSRM annotations → geometry
+     ⓑ Real traffic lights & stop signs from OpenStreetMap
+     ⓒ Real posted speed limits (maxspeed tags)
+     ⓓ Real road classifications (highway=* tags)
+     ⓔ OSRM annotation speeds as per-segment reference
+     ⓕ Fallback to geometry-based detection when real data unavailable
 
    Pipeline (20 passes):
      1.  Geometry           – segment distances, turn angles, raw grades
      2.  Grade smoothing    – 7-point windowed average on raw grades
      3.  Air density        – per-point ρ from barometric formula
-     4.  Road classification– auto-detect or override road type per point
-     5.  Speed limits       – assign per-point speed limits from road type
+     4.  Road classification– real OSM tags → OSRM → geometry fallback
+     5.  Speed limits       – real maxspeed → OSRM speed → type default
      6.  Curvature limits   – Menger curvature → cornering-G speed cap
      7.  Grade limits       – uphill / downhill speed adjustments
      8.  Cap to limits      – min(vMax, roadSpeedLimit)
-     9.  Traffic stops      – red lights & stop signs at intersections
+     9.  Traffic stops      – real signals/stops → probabilistic fallback
     10.  Power + traction   – power-limited, traction-limited, friction-circle
     11.  Forward sweep      – accel-limited (kinematic v²=v₀²+2ad)
     12.  Backward sweep     – grade-aware, friction-circle braking
@@ -28,13 +29,13 @@
     16.  Enforce min speed  – floor at idle / crawl (respects stops)
     17.  Timeline           – elapsed seconds + dwell time at stops
     18.  Bearings           – heading at each point
-    19.  Annotate env       – tag output with roadType, speedLimit, stopType
+    19.  Annotate env       – tag output with roadType, speedLimit, stopType, dataSource
     20.  Unit conversion    – m/s → km/h
 
    Output per point:
      { lat, lon, ele, speed (km/h), bearing (°), acceleration (m/s²),
        distance (m cumulative), elapsed (s cumulative), grade (rise/run),
-       roadType, speedLimit (km/h), isStop, stopType }
+       roadType, speedLimit (km/h), isStop, stopType, dataSource }
    ═══════════════════════════════════════════════════════════════ */
 
 class PhysicsEngine {
@@ -84,6 +85,12 @@ class PhysicsEngine {
     this.envRoadType        = env.roadType        || "auto";
     this.envTrafficDensity  = env.trafficDensity  || "moderate";
     this.envSpeedLimitScale = env.speedLimitScale  || 1.0;
+
+    // ── Real-world data (from RoutePlanner.snapEnvironmentToRoute) ──
+    // snappedEnv = { speedLimits[], roadTypes[], trafficSignals[], stopSigns[],
+    //               osrmSpeeds[], maneuverPoints[], source }
+    this.realData = env.snappedEnv || null;
+    this.dataSource = this.realData ? this.realData.source : "geometry";
   }
 
   /* ═══════════════════════════════════════════
@@ -216,78 +223,131 @@ class PhysicsEngine {
   }
 
   /* ═══════════════════════════════════════════
-     PASS 4 – Road segment classification  ★ ENV
+     PASS 4 – Road segment classification  ★ REAL DATA
      ═══════════════════════════════════════════
-     Auto-detect road type from local geometry (segment
-     distances + heading change rate).  A sliding-window
-     "road score" is smoothed and classified into:
-       highway  → long straight segments
-       rural    → medium segments, gentle curves
-       urban    → short segments, frequent turns
-       residential → very short, many sharp turns
-     User can override via environmentConfig.roadType.
+     Priority: 1) User override  2) Real OSM highway tags
+               3) Geometry-based auto-detect (fallback)
+
+     OSM highway=* → internal classification:
+       motorway, trunk, primary        → highway
+       secondary, tertiary             → rural
+       residential, living_street      → residential
+       service, unclassified, *        → urban
   */
   _classifyRoadSegments() {
     const n = this.pts.length;
     this._roadClass = new Array(n);
+    this._roadSource = new Array(n); // track data source per point
 
     // User override: all points get the same road type
     if (this.envRoadType !== "auto") {
       this._roadClass.fill(this.envRoadType);
+      this._roadSource.fill("override");
       return;
     }
 
-    // ── Auto-detect from geometry ──
+    // ── 1. Try real OSM highway tags from Overpass ──
+    const OSM_MAP = {
+      motorway: "highway", motorway_link: "highway",
+      trunk: "highway", trunk_link: "highway",
+      primary: "highway", primary_link: "highway",
+      secondary: "rural", secondary_link: "rural",
+      tertiary: "rural", tertiary_link: "rural",
+      residential: "residential", living_street: "residential",
+      service: "urban", unclassified: "urban",
+    };
+
+    let realCount = 0;
+    if (this.realData && this.realData.roadTypes) {
+      for (let i = 0; i < n; i++) {
+        const osmTag = this.realData.roadTypes[i];
+        if (osmTag && OSM_MAP[osmTag]) {
+          this._roadClass[i] = OSM_MAP[osmTag];
+          this._roadSource[i] = "overpass";
+          realCount++;
+        }
+      }
+    }
+
+    // If > 70% of points have real data, fill gaps by interpolation
+    if (realCount > n * 0.7) {
+      let lastKnown = null;
+      for (let i = 0; i < n; i++) {
+        if (this._roadClass[i]) { lastKnown = this._roadClass[i]; }
+        else if (lastKnown) {
+          this._roadClass[i] = lastKnown;
+          this._roadSource[i] = "interpolated";
+        }
+      }
+      // Back-fill any remaining nulls at the start
+      if (!this._roadClass[0]) {
+        const first = this._roadClass.find(Boolean) || "urban";
+        for (let i = 0; i < n; i++) {
+          if (!this._roadClass[i]) {
+            this._roadClass[i] = first;
+            this._roadSource[i] = "interpolated";
+          } else break;
+        }
+      }
+      return;
+    }
+
+    // ── 2. Geometry-based fallback for uncovered points ──
     const windowHalf = 15;
     const rawScore = new Float64Array(n);
 
     for (let i = 0; i < n; i++) {
+      if (this._roadClass[i]) continue; // already classified
       let sumDist = 0, sumStraight = 0, count = 0;
       const lo = Math.max(1, i - windowHalf);
       const hi = Math.min(n - 1, i + windowHalf);
       for (let j = lo; j <= hi; j++) {
         sumDist += this.segDist[j];
-        // Straightness: 1 = perfectly straight, 0 = U-turn
         sumStraight += (1 - Math.min(this.turnAngle[j] / 90, 1));
         count++;
       }
       const avgDist = count > 0 ? sumDist / count : 0;
       const straightness = count > 0 ? sumStraight / count : 0.5;
-
-      // Combined score (0–1): long straight = high, short curvy = low
       rawScore[i] = Math.min(avgDist / 120, 1) * 0.5 + straightness * 0.5;
     }
 
-    // Smooth the score to avoid road-type flickering
+    // Smooth
     const smooth = new Float64Array(n);
     const smoothHalf = 10;
     for (let i = 0; i < n; i++) {
+      if (this._roadClass[i]) { smooth[i] = 0; continue; }
       let sum = 0, cnt = 0;
       const lo = Math.max(0, i - smoothHalf);
       const hi = Math.min(n - 1, i + smoothHalf);
-      for (let j = lo; j <= hi; j++) { sum += rawScore[j]; cnt++; }
-      smooth[i] = sum / cnt;
+      for (let j = lo; j <= hi; j++) {
+        if (!this._roadClass[j]) { sum += rawScore[j]; cnt++; }
+      }
+      smooth[i] = cnt > 0 ? sum / cnt : 0.5;
     }
 
-    // Classify
     for (let i = 0; i < n; i++) {
+      if (this._roadClass[i]) continue;
       const s = smooth[i];
       if      (s > 0.82) this._roadClass[i] = "highway";
       else if (s > 0.62) this._roadClass[i] = "rural";
       else if (s > 0.38) this._roadClass[i] = "urban";
       else               this._roadClass[i] = "residential";
+      this._roadSource[i] = "geometry";
     }
   }
 
   /* ═══════════════════════════════════════════
-     PASS 5 – Speed limits from road type  ★ ENV
+     PASS 5 – Speed limits  ★ REAL DATA
      ═══════════════════════════════════════════
-     Realistic speed limits per road type, capped
-     by the vehicle’s own top speed.
+     Priority: 1) Real OSM maxspeed tags (Overpass)
+               2) OSRM annotation speed (road reference speed)
+               3) Road-type default table (fallback)
+     All capped by the vehicle's own top speed.
   */
   _assignSpeedLimits() {
     const n = this.pts.length;
     this._speedLimit = new Float64Array(n);
+    this._limitSource = new Array(n);
 
     const LIMITS = {
       highway:     110 / 3.6,   // m/s
@@ -297,8 +357,26 @@ class PhysicsEngine {
     };
 
     for (let i = 0; i < n; i++) {
-      const base = LIMITS[this._roadClass[i]] || LIMITS.urban;
+      let base = 0;
+      let source = "type-default";
+
+      // Priority 1: Real OSM maxspeed from Overpass
+      if (this.realData && this.realData.speedLimits && this.realData.speedLimits[i]) {
+        base = this.realData.speedLimits[i] / 3.6;
+        source = "overpass";
+      }
+      // Priority 2: OSRM annotation speed
+      else if (this.realData && this.realData.osrmSpeeds && this.realData.osrmSpeeds[i] > 0) {
+        base = this.realData.osrmSpeeds[i] * 1.15;
+        source = "osrm";
+      }
+      // Priority 3: Road-type default
+      else {
+        base = LIMITS[this._roadClass[i]] || LIMITS.urban;
+      }
+
       this._speedLimit[i] = Math.min(base * this.envSpeedLimitScale, this.vMax);
+      this._limitSource[i] = source;
     }
   }
 
@@ -383,13 +461,14 @@ class PhysicsEngine {
   }
 
   /* ═══════════════════════════════════════════
-     PASS 9 – Traffic lights & stop signs  ★ ENV
+     PASS 9 – Traffic lights & stop signs  ★ REAL DATA
      ═══════════════════════════════════════════
-     Detect intersections (significant turn angle) and
-     probabilistically place stops based on traffic density.
-     Urban intersections → traffic lights (longer wait).
-     Residential intersections → stop signs (shorter wait).
-     Highways never have stops.
+     Priority: 1) Real traffic signals & stop signs from Overpass
+               2) OSRM maneuver points (likely intersections)
+               3) Geometry-based probabilistic fallback
+
+     Traffic density setting controls stop probability at
+     real signals (green vs red) and dwell durations.
   */
   _applyTrafficStops() {
     const n = this.pts.length;
@@ -398,13 +477,6 @@ class PhysicsEngine {
 
     if (this.envTrafficDensity === "none") return;
 
-    // Probability of a stop at each detected intersection by road type
-    const STOP_PROB = {
-      light:    { highway: 0, rural: 0.05, urban: 0.25, residential: 0.15 },
-      moderate: { highway: 0, rural: 0.12, urban: 0.50, residential: 0.35 },
-      heavy:    { highway: 0, rural: 0.20, urban: 0.75, residential: 0.55 },
-    };
-
     // Dwell (wait) duration range in seconds
     const DWELL = {
       light:    { min: 3,  max: 15 },
@@ -412,38 +484,86 @@ class PhysicsEngine {
       heavy:    { min: 15, max: 45 },
     };
 
-    const minSpacing = 120; // min metres between stops
+    // Probability of catching a red light (signals only) by traffic density
+    const RED_PROB = { light: 0.30, moderate: 0.55, heavy: 0.80 };
+
+    const minSpacing = 80; // min metres between stops
     let lastStopDist = -minSpacing * 2;
 
+    // ── 1. Real traffic signals from Overpass ──
+    if (this.realData && this.realData.trafficSignals) {
+      for (let i = 3; i < n - 3; i++) {
+        if (!this.realData.trafficSignals[i]) continue;
+        if (this.pts[i].distance - lastStopDist < minSpacing) continue;
+
+        // Probabilistic: not every traffic light is red
+        const prob = RED_PROB[this.envTrafficDensity] || 0.55;
+        if (this._simpleHash(i) >= prob) continue;
+
+        this._isStop[i] = 1; // traffic light
+        const dwell = DWELL[this.envTrafficDensity] || DWELL.moderate;
+        this._stopDuration[i] = dwell.min + this._simpleHash(i + 7919) * (dwell.max - dwell.min);
+        this.pts[i].speed = 0;
+        lastStopDist = this.pts[i].distance;
+      }
+    }
+
+    // ── 2. Real stop signs from Overpass ──
+    if (this.realData && this.realData.stopSigns) {
+      for (let i = 3; i < n - 3; i++) {
+        if (!this.realData.stopSigns[i]) continue;
+        if (this._isStop[i]) continue; // already a traffic light
+        if (this.pts[i].distance - lastStopDist < minSpacing) continue;
+
+        this._isStop[i] = 2; // stop sign
+        this._stopDuration[i] = Math.min(
+          3 + this._simpleHash(i + 3571) * 5, 8
+        );
+        this.pts[i].speed = 0;
+        lastStopDist = this.pts[i].distance;
+      }
+    }
+
+    // ── 3. Probabilistic fallback for points without real data ──
+    // Only if real data is sparse or unavailable
+    const realStopCount = Array.from(this._isStop).filter(Boolean).length;
+    const hasRealData = this.realData && (
+      (this.realData.trafficSignals && Array.from(this.realData.trafficSignals).some(Boolean)) ||
+      (this.realData.stopSigns && Array.from(this.realData.stopSigns).some(Boolean))
+    );
+
+    // Skip probabilistic fallback if we have real stop data
+    if (hasRealData && realStopCount > 0) return;
+
+    // Fallback: geometry-based intersection detection
+    const STOP_PROB = {
+      light:    { highway: 0, rural: 0.05, urban: 0.25, residential: 0.15 },
+      moderate: { highway: 0, rural: 0.12, urban: 0.50, residential: 0.35 },
+      heavy:    { highway: 0, rural: 0.20, urban: 0.75, residential: 0.55 },
+    };
+
     for (let i = 3; i < n - 3; i++) {
+      if (this._isStop[i]) continue;
       const road = this._roadClass[i];
       if (road === "highway") continue;
 
-      // Only place stops at significant turns (intersections)
       const threshold = road === "residential" ? 22 : 30;
       if (this.turnAngle[i] < threshold) continue;
-
-      // Enforce minimum spacing between stops
       if (this.pts[i].distance - lastStopDist < minSpacing) continue;
 
-      // Deterministic random decision based on point geometry
       const rng = this._simpleHash(i);
       const prob = (STOP_PROB[this.envTrafficDensity] || {})[road] || 0;
       if (rng >= prob) continue;
 
-      // Mark stop: urban → traffic light, residential → stop sign
       this._isStop[i] = (road === "urban" || road === "rural") ? 1 : 2;
 
-      // Dwell time — traffic lights wait longer than stop signs
       const dwell = DWELL[this.envTrafficDensity] || DWELL.moderate;
       const baseDwell = dwell.min + this._simpleHash(i + 7919) * (dwell.max - dwell.min);
       this._stopDuration[i] = this._isStop[i] === 2
-        ? Math.min(baseDwell, 8)   // stop signs: max ~8 s
-        : baseDwell;               // traffic lights: full range
+        ? Math.min(baseDwell, 8)
+        : baseDwell;
 
-      // Anchor speed to 0 — sweeps will create natural decel/accel
       this.pts[i].speed = 0;
-
       lastStopDist = this.pts[i].distance;
     }
   }
@@ -781,11 +901,11 @@ class PhysicsEngine {
   }
 
   /* ═══════════════════════════════════════════
-     PASS 19 – Annotate output with environment info  ★ ENV
+     PASS 19 – Annotate output with environment info  ★ REAL DATA
      ═══════════════════════════════════════════
-     Tag each output point with roadType, speedLimit
-     (already in km/h), and stop information so the
-     HUD and animation can display them.
+     Tag each output point with roadType, speedLimit,
+     stop information, and data source so the HUD and
+     animation can display them.
   */
   _annotateEnvironment() {
     for (let i = 0; i < this.pts.length; i++) {
@@ -794,6 +914,9 @@ class PhysicsEngine {
       this.pts[i].isStop     = this._isStop      ? this._isStop[i] > 0         : false;
       this.pts[i].stopType   = this._isStop && this._isStop[i] === 1 ? "trafficLight" :
                                this._isStop && this._isStop[i] === 2 ? "stopSign"     : null;
+      this.pts[i].dataSource = this.dataSource || "geometry";
+      this.pts[i].roadSource = this._roadSource  ? this._roadSource[i]         : "geometry";
+      this.pts[i].limitSource= this._limitSource ? this._limitSource[i]        : "type-default";
     }
   }
 

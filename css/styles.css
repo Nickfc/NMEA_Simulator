@@ -776,6 +776,19 @@ body.sidebar-collapsed .map { left: 0; }
   color: var(--accent);
 }
 
+/* Data source badge */
+.data-badge {
+  display: inline-block;
+  font-size: .7rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(79 140 255 / .15);
+  border: 1px solid rgba(79 140 255 / .3);
+  color: var(--accent);
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
 /* ---------- Loop Controls ---------- */
 .seed-row {
   display: flex;

@@ -1,14 +1,17 @@
 /**
- * RoutePlanner – handles geocoding, OSRM routing, and closed-loop generation.
+ * RoutePlanner – handles geocoding, OSRM routing, Overpass enrichment,
+ * and closed-loop generation.
  *
  * APIs used (all free, no key):
  *   Geocoding  → Nominatim  (OpenStreetMap)
  *   Routing    → OSRM demo  (project-osrm.org)
+ *   Map data   → Overpass   (overpass-api.de)
  */
 class RoutePlanner {
   constructor() {
     this.NOMINATIM = "https://nominatim.openstreetmap.org";
     this.OSRM      = "https://router.project-osrm.org";
+    this.OVERPASS  = "https://overpass-api.de/api/interpreter";
   }
 
   /* ─── Geocoding ─── */
@@ -55,7 +58,14 @@ class RoutePlanner {
    * Get a routed path between an ordered array of waypoints [{lat,lon},...].
    * @param {Array} waypoints
    * @param {string} [profile='driving'] - OSRM profile: driving | cycling | foot
-   * Returns { coordinates: [{lat, lon, ele}], distanceKm, durationSec }.
+   * Returns { coordinates, distanceKm, durationSec, environmentData }.
+   *
+   * environmentData = {
+   *   osrmSpeeds:      [{speed, distance}]   – per-segment from annotations
+   *   maneuvers:       [{lat, lon, type, name, modifier}]  – from steps
+   *   overpass:        {trafficSignals, stopSigns, speedLimits, roadTypes}
+   *   source:          "osrm+overpass" | "osrm" | "basic"
+   * }
    */
   async route(waypoints, profile = "driving") {
     if (waypoints.length < 2) throw new Error("Need at least 2 waypoints");
@@ -64,7 +74,8 @@ class RoutePlanner {
     const url = `${this.OSRM}/route/v1/${profile}/${coords}?` + new URLSearchParams({
       overview: "full",
       geometries: "geojson",
-      steps: "false",
+      steps: "true",
+      annotations: "speed,duration,nodes",
     });
 
     const res = await fetch(url);
@@ -77,11 +88,343 @@ class RoutePlanner {
       lat, lon, ele: 0,
     }));
 
+    // ── Parse OSRM annotations (per-segment speeds) ──
+    const osrmSpeeds = [];
+    if (route.legs) {
+      for (const leg of route.legs) {
+        if (leg.annotation && leg.annotation.speed) {
+          const speeds = leg.annotation.speed;
+          const dists  = leg.annotation.distance || [];
+          for (let i = 0; i < speeds.length; i++) {
+            osrmSpeeds.push({
+              speed: speeds[i],       // m/s
+              distance: dists[i] || 0, // metres
+            });
+          }
+        }
+      }
+    }
+
+    // ── Parse OSRM steps (maneuvers = real intersections) ──
+    const maneuvers = [];
+    if (route.legs) {
+      for (const leg of route.legs) {
+        if (leg.steps) {
+          for (const step of leg.steps) {
+            if (step.maneuver) {
+              maneuvers.push({
+                lat: step.maneuver.location[1],
+                lon: step.maneuver.location[0],
+                type: step.maneuver.type,       // turn, new name, roundabout, etc.
+                modifier: step.maneuver.modifier || null,  // left, right, straight
+                name: step.name || "",
+                ref: step.ref || "",
+                speedLimit: step.speed_limit || null,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // ── Build environment data ──
+    const environmentData = {
+      osrmSpeeds,
+      maneuvers,
+      overpass: null,
+      source: "osrm",
+    };
+
+    // ── Fetch Overpass enrichment (async, non-blocking on failure) ──
+    try {
+      const overpass = await this.queryOverpass(coordinates);
+      if (overpass) {
+        environmentData.overpass = overpass;
+        environmentData.source = "osrm+overpass";
+      }
+    } catch (e) {
+      console.warn("Overpass query failed, using OSRM-only data:", e.message);
+    }
+
     return {
       coordinates,
       distanceKm: route.distance / 1000,
       durationSec: route.duration,
+      environmentData,
     };
+  }
+
+  /* ─── Overpass API ─── */
+
+  /**
+   * Query Overpass for traffic signals, stop signs, speed limits, and road
+   * types within the bounding box of the given route coordinates.
+   * Returns { trafficSignals, stopSigns, speedLimits, roadTypes }.
+   */
+  async queryOverpass(coordinates) {
+    if (!coordinates || coordinates.length < 2) return null;
+
+    // Compute bounding box with a small padding (~200 m ≈ 0.002°)
+    let minLat = Infinity, maxLat = -Infinity;
+    let minLon = Infinity, maxLon = -Infinity;
+    for (const c of coordinates) {
+      if (c.lat < minLat) minLat = c.lat;
+      if (c.lat > maxLat) maxLat = c.lat;
+      if (c.lon < minLon) minLon = c.lon;
+      if (c.lon > maxLon) maxLon = c.lon;
+    }
+    const pad = 0.002;
+    const bbox = `${minLat - pad},${minLon - pad},${maxLat + pad},${maxLon + pad}`;
+
+    // Single Overpass query: traffic signals, stop signs, speed limits, road types
+    const query = `
+      [out:json][timeout:15][bbox:${bbox}];
+      (
+        node["highway"="traffic_signals"];
+        node["highway"="stop"];
+        node["highway"="give_way"];
+        way["maxspeed"];
+        way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified|service|living_street)$"];
+      );
+      out body geom;
+    `;
+
+    const res = await fetch(this.OVERPASS, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "data=" + encodeURIComponent(query),
+    });
+
+    if (!res.ok) throw new Error(`Overpass HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.elements) return null;
+
+    // ── Sort elements into categories ──
+    const trafficSignals = [];
+    const stopSigns = [];
+    const speedLimits = [];  // ways with maxspeed
+    const roadTypes = [];    // ways with highway tag
+
+    for (const el of data.elements) {
+      if (el.type === "node") {
+        const hw = el.tags && el.tags.highway;
+        if (hw === "traffic_signals") {
+          trafficSignals.push({ lat: el.lat, lon: el.lon, id: el.id });
+        } else if (hw === "stop") {
+          stopSigns.push({ lat: el.lat, lon: el.lon, id: el.id });
+        }
+        // give_way → treat as stop sign (yield)
+        else if (hw === "give_way") {
+          stopSigns.push({ lat: el.lat, lon: el.lon, id: el.id, yield: true });
+        }
+      }
+      else if (el.type === "way" && el.geometry) {
+        const tags = el.tags || {};
+        const wayGeom = el.geometry.map((g) => ({ lat: g.lat, lon: g.lon }));
+
+        if (tags.maxspeed) {
+          // Parse maxspeed: "50", "30 mph", "none", etc.
+          const parsed = this._parseMaxspeed(tags.maxspeed);
+          if (parsed > 0) {
+            speedLimits.push({
+              id: el.id,
+              speedKmh: parsed,
+              geometry: wayGeom,
+              highway: tags.highway || "",
+            });
+          }
+        }
+
+        if (tags.highway) {
+          roadTypes.push({
+            id: el.id,
+            highway: tags.highway,
+            geometry: wayGeom,
+            name: tags.name || "",
+          });
+        }
+      }
+    }
+
+    return { trafficSignals, stopSigns, speedLimits, roadTypes };
+  }
+
+  /**
+   * Parse an OSM maxspeed value to km/h.
+   * Handles: "50", "30 mph", "none", "walk", "RO:urban", etc.
+   */
+  _parseMaxspeed(val) {
+    if (!val || val === "none" || val === "signals") return 0;
+    if (val === "walk" || val === "living_street") return 5;
+
+    // Handle "XX mph"
+    const mphMatch = val.match(/^(\d+)\s*mph$/i);
+    if (mphMatch) return parseFloat(mphMatch[1]) * 1.60934;
+
+    // Handle "XX" (km/h implied)
+    const numMatch = val.match(/^(\d+)/);
+    if (numMatch) return parseFloat(numMatch[1]);
+
+    // Country-specific defaults (e.g. "RO:urban" → 50)
+    if (val.includes(":urban")) return 50;
+    if (val.includes(":rural")) return 90;
+    if (val.includes(":motorway")) return 130;
+
+    return 0;
+  }
+
+  /**
+   * Snap Overpass + OSRM data to route coordinates.
+   * Returns per-point arrays: { speedLimits[], roadTypes[], trafficSignals[], stopSigns[] }
+   * Each array is same length as coords. Values are the nearest match or null.
+   */
+  static snapEnvironmentToRoute(coordinates, environmentData) {
+    const n = coordinates.length;
+    const result = {
+      speedLimits:    new Array(n).fill(null),   // km/h or null
+      roadTypes:      new Array(n).fill(null),   // OSM highway tag or null
+      trafficSignals: new Uint8Array(n),         // 1 = traffic light nearby
+      stopSigns:      new Uint8Array(n),         // 1 = stop sign nearby
+      osrmSpeeds:     new Float64Array(n),       // OSRM annotation speed m/s
+      maneuverPoints: new Uint8Array(n),         // 1 = OSRM maneuver here
+      source:         environmentData.source || "basic",
+    };
+
+    // ── 1. OSRM annotation speeds → per-point ──
+    // Annotations are per-segment (n-1 values for n coords).
+    // Map segment i → point i (the start of that segment).
+    if (environmentData.osrmSpeeds && environmentData.osrmSpeeds.length > 0) {
+      const speeds = environmentData.osrmSpeeds;
+      for (let i = 0; i < n; i++) {
+        // Annotations can have fewer entries than coords (gaps between legs)
+        const si = Math.min(i, speeds.length - 1);
+        result.osrmSpeeds[i] = speeds[si] ? speeds[si].speed : 0;
+      }
+    }
+
+    // ── 2. OSRM maneuvers → snap to nearest route point ──
+    if (environmentData.maneuvers) {
+      for (const m of environmentData.maneuvers) {
+        const idx = RoutePlanner._nearestPointIndex(coordinates, m.lat, m.lon, 50);
+        if (idx >= 0) result.maneuverPoints[idx] = 1;
+      }
+    }
+
+    // ── 3. Overpass data ──
+    const ov = environmentData.overpass;
+    if (ov) {
+      // Traffic signals → snap to nearest route point within 35 m
+      if (ov.trafficSignals) {
+        for (const ts of ov.trafficSignals) {
+          const idx = RoutePlanner._nearestPointIndex(coordinates, ts.lat, ts.lon, 35);
+          if (idx >= 0) result.trafficSignals[idx] = 1;
+        }
+      }
+
+      // Stop signs → snap
+      if (ov.stopSigns) {
+        for (const ss of ov.stopSigns) {
+          const idx = RoutePlanner._nearestPointIndex(coordinates, ss.lat, ss.lon, 35);
+          if (idx >= 0) result.stopSigns[idx] = 1;
+        }
+      }
+
+      // Speed limits → for each way, snap its geometry midpoint and
+      // tag all route points within that way's extent
+      if (ov.speedLimits && ov.speedLimits.length > 0) {
+        RoutePlanner._snapWaysToRoute(coordinates, ov.speedLimits, (i, way) => {
+          result.speedLimits[i] = way.speedKmh;
+        });
+      }
+
+      // Road types → same approach
+      if (ov.roadTypes && ov.roadTypes.length > 0) {
+        RoutePlanner._snapWaysToRoute(coordinates, ov.roadTypes, (i, way) => {
+          result.roadTypes[i] = way.highway;
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Find the index of the route point nearest to (lat, lon)
+   * within maxDist metres. Returns -1 if none found.
+   */
+  static _nearestPointIndex(coords, lat, lon, maxDist) {
+    let bestIdx = -1, bestDist = maxDist;
+    for (let i = 0; i < coords.length; i++) {
+      const d = GeoUtils.haversineDistance(coords[i], { lat, lon });
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    return bestIdx;
+  }
+
+  /**
+   * For each OSM way, find the route points that lie along it
+   * and call tagFn(pointIndex, way) for each match.
+   */
+  static _snapWaysToRoute(coords, ways, tagFn) {
+    // For each way, compute its bounding extents, then scan route points
+    for (const way of ways) {
+      if (!way.geometry || way.geometry.length < 2) continue;
+
+      // Way bounding box
+      let wMinLat = Infinity, wMaxLat = -Infinity;
+      let wMinLon = Infinity, wMaxLon = -Infinity;
+      for (const g of way.geometry) {
+        if (g.lat < wMinLat) wMinLat = g.lat;
+        if (g.lat > wMaxLat) wMaxLat = g.lat;
+        if (g.lon < wMinLon) wMinLon = g.lon;
+        if (g.lon > wMaxLon) wMaxLon = g.lon;
+      }
+      // Expand by ~30 m ≈ 0.0003°
+      const exp = 0.0003;
+      wMinLat -= exp; wMaxLat += exp;
+      wMinLon -= exp; wMaxLon += exp;
+
+      // Tag all route points inside this way's bbox
+      for (let i = 0; i < coords.length; i++) {
+        const c = coords[i];
+        if (c.lat >= wMinLat && c.lat <= wMaxLat &&
+            c.lon >= wMinLon && c.lon <= wMaxLon) {
+          // Verify proximity to any segment of the way
+          let close = false;
+          for (let w = 0; w < way.geometry.length - 1; w++) {
+            const d = RoutePlanner._pointToSegmentDist(
+              c, way.geometry[w], way.geometry[w + 1]
+            );
+            if (d < 25) { close = true; break; }
+          }
+          if (close) tagFn(i, way);
+        }
+      }
+    }
+  }
+
+  /**
+   * Approximate distance (metres) from point P to segment AB.
+   * Uses flat-earth approximation (fine for short distances).
+   */
+  static _pointToSegmentDist(p, a, b) {
+    const R = 6371000;
+    const toRad = Math.PI / 180;
+    const cosLat = Math.cos(p.lat * toRad);
+
+    // Convert to local metres
+    const px = (p.lon - a.lon) * toRad * R * cosLat;
+    const py = (p.lat - a.lat) * toRad * R;
+    const bx = (b.lon - a.lon) * toRad * R * cosLat;
+    const by = (b.lat - a.lat) * toRad * R;
+
+    const lenSq = bx * bx + by * by;
+    if (lenSq < 0.01) return Math.sqrt(px * px + py * py);
+
+    const t = Math.max(0, Math.min(1, (px * bx + py * by) / lenSq));
+    const dx = px - t * bx;
+    const dy = py - t * by;
+    return Math.sqrt(dx * dx + dy * dy);
   }
 
   /* ─── Closed-loop generation ─── */
