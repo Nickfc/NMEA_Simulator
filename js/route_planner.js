@@ -288,6 +288,8 @@ class RoutePlanner {
       stopSigns:      new Uint8Array(n),         // 1 = stop sign nearby
       osrmSpeeds:     new Float64Array(n),       // OSRM annotation speed m/s
       maneuverPoints: new Uint8Array(n),         // 1 = OSRM maneuver here
+      signalCoords:   {},                        // { idx: {lat,lon} } actual signal positions
+      stopCoords:     {},                        // { idx: {lat,lon} } actual stop-sign positions
       source:         environmentData.source || "basic",
     };
 
@@ -314,19 +316,25 @@ class RoutePlanner {
     // ── 3. Overpass data ──
     const ov = environmentData.overpass;
     if (ov) {
-      // Traffic signals → snap to nearest route point within 35 m
+      // Traffic signals → segment-based snap within 30 m
       if (ov.trafficSignals) {
         for (const ts of ov.trafficSignals) {
-          const idx = RoutePlanner._nearestPointIndex(coordinates, ts.lat, ts.lon, 35);
-          if (idx >= 0) result.trafficSignals[idx] = 1;
+          const idx = RoutePlanner._findBestStopIndex(coordinates, ts.lat, ts.lon, 30);
+          if (idx >= 0) {
+            result.trafficSignals[idx] = 1;
+            result.signalCoords[idx] = { lat: ts.lat, lon: ts.lon };
+          }
         }
       }
 
-      // Stop signs → snap
+      // Stop signs → segment-based snap within 25 m
       if (ov.stopSigns) {
         for (const ss of ov.stopSigns) {
-          const idx = RoutePlanner._nearestPointIndex(coordinates, ss.lat, ss.lon, 35);
-          if (idx >= 0) result.stopSigns[idx] = 1;
+          const idx = RoutePlanner._findBestStopIndex(coordinates, ss.lat, ss.lon, 25);
+          if (idx >= 0) {
+            result.stopSigns[idx] = 1;
+            result.stopCoords[idx] = { lat: ss.lat, lon: ss.lon };
+          }
         }
       }
 
@@ -398,6 +406,74 @@ class RoutePlanner {
       if (d < bestDist) { bestDist = d; bestIdx = i; }
     }
     return bestIdx;
+  }
+
+  /**
+   * Perpendicular distance from point P to segment [A, B].
+   * Returns { dist (metres), t (projection parameter 0–1) }.
+   */
+  static _pointToSegmentInfo(pLat, pLon, aLat, aLon, bLat, bLon) {
+    const toRad = Math.PI / 180;
+    const R = 6371000;
+    const cosLat = Math.cos(pLat * toRad);
+
+    // Local metres relative to P (at origin)
+    const ax = (aLon - pLon) * toRad * R * cosLat;
+    const ay = (aLat - pLat) * toRad * R;
+    const bx = (bLon - pLon) * toRad * R * cosLat;
+    const by = (bLat - pLat) * toRad * R;
+
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+
+    if (lenSq < 0.01) {
+      return { dist: Math.sqrt(ax * ax + ay * ay), t: 0 };
+    }
+
+    const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / lenSq));
+    const cx = ax + t * dx;
+    const cy = ay + t * dy;
+    return { dist: Math.sqrt(cx * cx + cy * cy), t };
+  }
+
+  /**
+   * Segment-based snap for traffic features.
+   * Finds the route segment closest to (lat, lon) and returns
+   * the route point index that places the stop closest to the
+   * feature while preferring the approach side (just before).
+   */
+  static _findBestStopIndex(coords, lat, lon, maxDist = 30) {
+    const n = coords.length;
+    if (n < 2) return RoutePlanner._nearestPointIndex(coords, lat, lon, maxDist);
+
+    // Scan all segments for the one with minimum perpendicular distance
+    let bestSegIdx = -1;
+    let bestSegDist = maxDist;
+    let bestT = 0;
+
+    for (let i = 0; i < n - 1; i++) {
+      const info = RoutePlanner._pointToSegmentInfo(
+        lat, lon,
+        coords[i].lat, coords[i].lon,
+        coords[i + 1].lat, coords[i + 1].lon
+      );
+      if (info.dist < bestSegDist) {
+        bestSegDist = info.dist;
+        bestSegIdx = i;
+        bestT = info.t;
+      }
+    }
+
+    if (bestSegIdx < 0) return -1;
+
+    // The signal projects onto segment [bestSegIdx, bestSegIdx+1] at t.
+    // Pick the endpoint that is closer to the projection.
+    // This minimises the visual gap between the stop and the signal marker.
+    if (bestT > 0.5 && bestSegIdx + 1 < n) {
+      return bestSegIdx + 1;
+    }
+    return bestSegIdx;
   }
 
   /**

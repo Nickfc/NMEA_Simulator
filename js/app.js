@@ -623,6 +623,12 @@ function handlePlay() {
     const totalRouteTime = speedOrTime === "routeTime" ? parseFloat(totalRouteTimeInput.value) * 60 : null;
     const startTime = startTimeInput.value ? new Date(startTimeInput.value) : new Date();
 
+    // Restore original route points — interpolateRoutePoints (from Generate NMEA)
+    // may have replaced them, causing index misalignment with snappedEnvironment.
+    if (routedCoordinates) {
+      conversion.routePoints = routedCoordinates.map(c => ({ lat: c.lat, lon: c.lon, ele: c.ele || 0 }));
+    }
+
     const physicsEngine = new PhysicsEngine(
       conversion.routePoints,
       customization.getVehicleProfile(vehicleType),
