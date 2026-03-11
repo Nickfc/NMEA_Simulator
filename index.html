@@ -70,17 +70,81 @@
           <i class="fas fa-chevron-down panel-chevron"></i>
         </button>
         <div class="panel-body open">
-          <p class="hint">Generate a round-trip that starts &amp; ends at waypoint&nbsp;1.</p>
-          <div class="form-row">
-            <div class="form-group">
-              <label for="loopDistance">Target distance <span class="unit">(km)</span></label>
-              <input type="number" id="loopDistance" min="0.5" step="0.5" value="5" />
+          <p class="hint">Generate a round-trip that starts &amp; ends at waypoint&nbsp;1. Drag the marker to regenerate.</p>
+
+          <!-- Distance -->
+          <div class="form-group">
+            <label for="loopDistance">Target distance <span class="unit">(km)</span></label>
+            <input type="number" id="loopDistance" min="0.5" step="0.5" value="5" />
+          </div>
+
+          <!-- Shape -->
+          <div class="form-group">
+            <label>Shape</label>
+            <div class="chip-group" data-for="loopShape">
+              <button class="chip active" data-value="circular"><i class="fas fa-circle"></i> Circular</button>
+              <button class="chip" data-value="elongated"><i class="fas fa-arrows-left-right"></i> Elongated</button>
+              <button class="chip" data-value="random"><i class="fas fa-shuffle"></i> Random</button>
             </div>
-            <div class="form-group" style="display:flex;align-items:flex-end">
-              <button id="generateLoop" class="btn btn-accent" style="margin-bottom:12px">
-                <i class="fas fa-rotate"></i> Generate Loop
-              </button>
+            <select id="loopShape" class="hidden-select">
+              <option value="circular" selected>Circular</option>
+              <option value="elongated">Elongated</option>
+              <option value="random">Random</option>
+            </select>
+          </div>
+
+          <!-- Heading -->
+          <div class="form-group">
+            <label>Preferred heading</label>
+            <div class="chip-group" data-for="loopHeading">
+              <button class="chip active" data-value="any"><i class="fas fa-arrows-up-down-left-right"></i> Any</button>
+              <button class="chip" data-value="0"><i class="fas fa-arrow-up"></i> N</button>
+              <button class="chip" data-value="90"><i class="fas fa-arrow-right"></i> E</button>
+              <button class="chip" data-value="180"><i class="fas fa-arrow-down"></i> S</button>
+              <button class="chip" data-value="270"><i class="fas fa-arrow-left"></i> W</button>
             </div>
+            <select id="loopHeading" class="hidden-select">
+              <option value="any" selected>Any</option>
+              <option value="0">N</option>
+              <option value="90">E</option>
+              <option value="180">S</option>
+              <option value="270">W</option>
+            </select>
+          </div>
+
+          <!-- Routing profile -->
+          <div class="form-group">
+            <label>Routing profile</label>
+            <div class="chip-group" data-for="loopProfile">
+              <button class="chip active" data-value="driving"><i class="fas fa-car"></i> Drive</button>
+              <button class="chip" data-value="cycling"><i class="fas fa-bicycle"></i> Cycle</button>
+              <button class="chip" data-value="foot"><i class="fas fa-person-walking"></i> Walk</button>
+            </div>
+            <select id="loopProfile" class="hidden-select">
+              <option value="driving" selected>Driving</option>
+              <option value="cycling">Cycling</option>
+              <option value="foot">Walking</option>
+            </select>
+          </div>
+
+          <!-- Seed / variation -->
+          <div class="form-group">
+            <label for="loopSeed">Variation seed</label>
+            <div class="seed-row">
+              <input type="number" id="loopSeed" min="1" max="999" step="1" value="1" />
+              <button id="randomSeed" class="btn-icon" title="Random seed"><i class="fas fa-dice"></i></button>
+            </div>
+            <p class="hint">Different seeds give different route shapes with the same settings.</p>
+          </div>
+
+          <!-- Buttons -->
+          <div class="loop-actions">
+            <button id="generateLoop" class="btn btn-accent">
+              <i class="fas fa-rotate"></i> Generate Loop
+            </button>
+            <button id="regenerateLoop" class="btn btn-outline btn-sm" disabled>
+              <i class="fas fa-arrows-rotate"></i> Regenerate
+            </button>
           </div>
         </div>
       </div>

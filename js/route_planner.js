@@ -53,13 +53,15 @@ class RoutePlanner {
 
   /**
    * Get a routed path between an ordered array of waypoints [{lat,lon},...].
+   * @param {Array} waypoints
+   * @param {string} [profile='driving'] - OSRM profile: driving | cycling | foot
    * Returns { coordinates: [{lat, lon, ele}], distanceKm, durationSec }.
    */
-  async route(waypoints) {
+  async route(waypoints, profile = "driving") {
     if (waypoints.length < 2) throw new Error("Need at least 2 waypoints");
 
     const coords = waypoints.map((w) => `${w.lon},${w.lat}`).join(";");
-    const url = `${this.OSRM}/route/v1/driving/${coords}?` + new URLSearchParams({
+    const url = `${this.OSRM}/route/v1/${profile}/${coords}?` + new URLSearchParams({
       overview: "full",
       geometries: "geojson",
       steps: "false",
@@ -85,61 +87,97 @@ class RoutePlanner {
   /* ─── Closed-loop generation ─── */
 
   /**
+   * Simple seeded PRNG (mulberry32) so the same seed gives the same jitter.
+   * Returns a function that yields numbers in [0, 1).
+   */
+  _seededRng(seed) {
+    let s = seed | 0;
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      let t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  /**
    * Generate a closed-loop route of approximately `targetKm` kilometres
    * starting and ending at `start` {lat,lon}.
    *
-   * Strategy: place 4–6 intermediate waypoints in a rough circle around the
-   * start, then route through them and back to start via OSRM.
-   * The actual routed distance will differ from the target because roads
-   * don't follow straight lines, so we do one iteration of scaling.
+   * @param {Object} start           - {lat, lon}
+   * @param {number} targetKm        - desired loop distance
+   * @param {Object} [opts]          - optional settings
+   * @param {string} [opts.shape='circular']    - circular | elongated | random
+   * @param {string|number} [opts.heading='any'] - 'any' or degrees 0-360
+   * @param {string} [opts.profile='driving']    - driving | cycling | foot
+   * @param {number} [opts.seed=1]               - deterministic variation seed
    */
-  async closedLoop(start, targetKm) {
+  async closedLoop(start, targetKm, opts = {}) {
     if (targetKm < 0.5) throw new Error("Minimum loop distance is 0.5 km");
 
-    // Rough radius in degrees (1° lat ≈ 111 km)
-    let radiusKm = targetKm / (2 * Math.PI) * 1.15;   // slight oversize
+    const shape   = opts.shape   || "circular";
+    const heading = opts.heading != null && opts.heading !== "any" ? parseFloat(opts.heading) : null;
+    const profile = opts.profile || "driving";
+    const seed    = opts.seed    || 1;
+    const rng     = this._seededRng(seed);
+
+    let radiusKm = targetKm / (2 * Math.PI) * 1.15;
     const numPoints = targetKm < 3 ? 4 : targetKm < 15 ? 5 : 6;
 
-    // Build attempt with scaling
+    // Heading offset in radians (rotates the entire loop)
+    const headingRad = heading != null ? (heading * Math.PI / 180) : (rng() * 2 * Math.PI);
+
     for (let attempt = 0; attempt < 3; attempt++) {
-      const radiusDeg = radiusKm / 111;
-      const waypoints = [{ lat: start.lat, lon: start.lon }];
+      const waypoints = this._buildLoopWaypoints(start, radiusKm, numPoints, shape, headingRad, rng);
+      const result = await this.route(waypoints, profile);
 
-      for (let i = 0; i < numPoints; i++) {
-        const angle = (2 * Math.PI * i) / numPoints - Math.PI / 2;
-        // Add small random jitter (10-20%) so it's not a perfect circle
-        const jitter = 0.85 + Math.random() * 0.3;
-        const lat = start.lat + radiusDeg * Math.sin(angle) * jitter;
-        const lon = start.lon + radiusDeg * Math.cos(angle) * jitter / Math.cos(start.lat * Math.PI / 180);
-        waypoints.push({ lat, lon });
-      }
-
-      // Close the loop
-      waypoints.push({ lat: start.lat, lon: start.lon });
-
-      const result = await this.route(waypoints);
-
-      // Check how far off we are
       const ratio = targetKm / result.distanceKm;
-      if (Math.abs(ratio - 1) < 0.15) {
-        // Close enough (within 15%)
-        return result;
-      }
-      // Scale radius for next attempt
+      if (Math.abs(ratio - 1) < 0.15) return result;
       radiusKm *= ratio;
     }
 
-    // Final attempt – just return whatever we got
+    // Final attempt – return whatever we get
+    const waypoints = this._buildLoopWaypoints(start, radiusKm, numPoints, shape, headingRad, rng);
+    return this.route(waypoints, profile);
+  }
+
+  /**
+   * Build an array of loop waypoints around `start`.
+   * @private
+   */
+  _buildLoopWaypoints(start, radiusKm, numPoints, shape, headingRad, rng) {
     const radiusDeg = radiusKm / 111;
+    const cosLat = Math.cos(start.lat * Math.PI / 180);
     const waypoints = [{ lat: start.lat, lon: start.lon }];
+
     for (let i = 0; i < numPoints; i++) {
-      const angle = (2 * Math.PI * i) / numPoints - Math.PI / 2;
-      const jitter = 0.85 + Math.random() * 0.3;
-      const lat = start.lat + radiusDeg * Math.sin(angle) * jitter;
-      const lon = start.lon + radiusDeg * Math.cos(angle) * jitter / Math.cos(start.lat * Math.PI / 180);
+      const baseAngle = (2 * Math.PI * i) / numPoints + headingRad;
+
+      // Shape modifiers
+      let rX = 1, rY = 1;
+      if (shape === "elongated") {
+        // Stretch along the heading axis, compress perpendicular
+        rX = 1.8;  // along heading
+        rY = 0.45; // across heading
+      } else if (shape === "random") {
+        rX = 0.5 + rng() * 1.5;
+        rY = 0.5 + rng() * 1.5;
+      }
+
+      // Deterministic jitter per point (±15%)
+      const jitter = 0.85 + rng() * 0.3;
+
+      // Compute in local frame then rotate by headingRad
+      const localX = Math.cos(baseAngle) * rX;
+      const localY = Math.sin(baseAngle) * rY;
+
+      const lat = start.lat + radiusDeg * localY * jitter;
+      const lon = start.lon + radiusDeg * localX * jitter / cosLat;
       waypoints.push({ lat, lon });
     }
+
+    // Close the loop
     waypoints.push({ lat: start.lat, lon: start.lon });
-    return this.route(waypoints);
+    return waypoints;
   }
 }

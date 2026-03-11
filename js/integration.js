@@ -30,6 +30,9 @@ class Integration {
     /** Callback fired whenever the waypoint list changes */
     this.onWaypointsChanged = null;
 
+    /** Callback fired when a specific waypoint marker is dragged (receives index, wp) */
+    this.onWaypointDragged = null;
+
     // Click-to-add waypoint
     this.map.on("click", (e) => {
       this.addWaypoint(e.latlng.lat, e.latlng.lng);
@@ -58,6 +61,9 @@ class Integration {
       wp.lat = pos.lat;
       wp.lon = pos.lng;
       this._notifyChange();
+      if (typeof this.onWaypointDragged === "function") {
+        this.onWaypointDragged(index, wp);
+      }
     });
 
     // Right-click to remove

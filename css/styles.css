@@ -776,6 +776,50 @@ body.sidebar-collapsed .map { left: 0; }
   color: var(--accent);
 }
 
+/* ---------- Loop Controls ---------- */
+.seed-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.seed-row input {
+  flex: 1;
+}
+.btn-icon {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+.btn-icon:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.loop-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.loop-actions .btn-accent {
+  flex: 1;
+}
+.loop-actions .btn-outline {
+  flex-shrink: 0;
+}
+.btn-sm {
+  font-size: .78rem;
+  padding: 6px 12px;
+}
+
 /* ---------- Accent Button ---------- */
 .btn-accent {
   background: var(--accent);

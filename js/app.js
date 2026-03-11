@@ -37,7 +37,13 @@ const wpCountEl                = document.getElementById("wpCount");
 const routeWaypointsBtn        = document.getElementById("routeWaypoints");
 const routeStatusEl            = document.getElementById("routeStatus");
 const generateLoopBtn          = document.getElementById("generateLoop");
+const regenerateLoopBtn        = document.getElementById("regenerateLoop");
 const loopDistanceInput        = document.getElementById("loopDistance");
+const loopShapeSelect          = document.getElementById("loopShape");
+const loopHeadingSelect        = document.getElementById("loopHeading");
+const loopProfileSelect        = document.getElementById("loopProfile");
+const loopSeedInput            = document.getElementById("loopSeed");
+const randomSeedBtn            = document.getElementById("randomSeed");
 const speedDisplay             = document.getElementById("speedDisplay");
 const bearingDisplay           = document.getElementById("bearingDisplay");
 const timeDisplay              = document.getElementById("timeDisplay");
@@ -61,6 +67,10 @@ let cachedNMEAData = null;
 // Routed coordinates (the detailed path from OSRM)
 let routedCoordinates = null;
 
+// Loop state – tracks whether a loop is active so we can regenerate on drag
+let loopActive = false;
+let loopDragDebounce = null;
+
 // ═══════════════════════════════════════════
 //   UI WIRING
 // ═══════════════════════════════════════════
@@ -78,6 +88,10 @@ animationPlaybackRateInput.addEventListener("input", handleAnimationPlaybackRate
 fileInput.addEventListener("change", handleFileInputChange);
 routeWaypointsBtn.addEventListener("click", handleRouteWaypoints);
 generateLoopBtn.addEventListener("click", handleGenerateLoop);
+regenerateLoopBtn.addEventListener("click", handleGenerateLoop);
+randomSeedBtn.addEventListener("click", () => {
+  loopSeedInput.value = Math.floor(Math.random() * 999) + 1;
+});
 searchBtn.addEventListener("click", handleAddressSearch);
 addressSearchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") handleAddressSearch(); });
 
@@ -154,6 +168,14 @@ animationPlaybackRateInput.addEventListener("input", () => {
 // Waypoint change callback → rebuild list
 mapIntegration.onWaypointsChanged = (waypoints) => {
   renderWaypointList(waypoints);
+};
+
+// When WP1 is dragged while a loop is active → auto-regenerate
+mapIntegration.onWaypointDragged = (index, wp) => {
+  if (loopActive && index === 0) {
+    clearTimeout(loopDragDebounce);
+    loopDragDebounce = setTimeout(() => handleGenerateLoop(), 350);
+  }
 };
 
 // ═══════════════════════════════════════════
@@ -255,7 +277,7 @@ async function handleRouteWaypoints() {
   }
 }
 
-/** Generate a closed-loop route from waypoint 1. */
+/** Generate a closed-loop route from waypoint 1 using all loop settings. */
 async function handleGenerateLoop() {
   const coords = mapIntegration.getWaypointCoords();
   if (coords.length === 0) {
@@ -268,12 +290,22 @@ async function handleGenerateLoop() {
     showRouteStatus("Enter a distance ≥ 0.5 km", "error");
     return;
   }
+
+  const opts = {
+    shape:   loopShapeSelect.value,
+    heading: loopHeadingSelect.value,
+    profile: loopProfileSelect.value,
+    seed:    parseInt(loopSeedInput.value, 10) || 1,
+  };
+
   showRouteStatus('<i class="fas fa-spinner fa-spin"></i> Generating loop…', "loading");
   try {
-    const result = await routePlanner.closedLoop(start, targetKm);
+    const result = await routePlanner.closedLoop(start, targetKm, opts);
     routedCoordinates = result.coordinates;
     mapIntegration.drawRoute(routedCoordinates);
     conversion.routePoints = routedCoordinates.map((c) => ({ lat: c.lat, lon: c.lon, ele: c.ele || 0 }));
+    loopActive = true;
+    regenerateLoopBtn.disabled = false;
     showRouteStatus(`<i class="fas fa-check"></i> Loop: ${result.distanceKm.toFixed(1)} km — ${formatDuration(result.durationSec)}`, "success");
   } catch (err) {
     showRouteStatus(`<i class="fas fa-exclamation-triangle"></i> ${err.message}`, "error");
@@ -321,6 +353,8 @@ function handleClearAll() {
   cachedProcessedRoutePoints = null;
   cachedNMEAData = null;
   routedCoordinates = null;
+  loopActive = false;
+  regenerateLoopBtn.disabled = true;
   conversion.routePoints = [];
   fileInput.value = "";
   fileInfo.classList.add("hidden");
