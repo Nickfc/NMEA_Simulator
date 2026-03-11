@@ -462,17 +462,10 @@ body.sidebar-collapsed .map { left: 0; }
   transform: translateX(-50%);
   z-index: 1000;
   pointer-events: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
 }
 .hud-row {
   display: flex;
   gap: 8px;
-  justify-content: center;
-}
-.hud-row-secondary {
-  margin-top: 6px;
 }
 .hud-card {
   background: rgba(15 17 23 / .78);
@@ -485,7 +478,6 @@ body.sidebar-collapsed .map { left: 0; }
   flex-direction: column;
   align-items: center;
   min-width: 120px;
-  transition: all .3s ease;
 }
 .hud-label {
   font-size: .68rem;
@@ -507,7 +499,7 @@ body.sidebar-collapsed .map { left: 0; }
 }
 
 /* Speed / Limit combined card */
-.hud-speed-card { min-width: 170px; }
+.hud-speed-card { min-width: 170px; position: relative; }
 .hud-speed-row {
   display: flex;
   align-items: baseline;
@@ -525,55 +517,46 @@ body.sidebar-collapsed .map { left: 0; }
   font-weight: 400;
 }
 
-/* Road card (wider, two-line layout) */
-.hud-road-card { min-width: 180px; max-width: 280px; }
+/* Road card */
+.hud-road-card { min-width: 140px; max-width: 220px; }
 .hud-road-name {
-  font-size: .92rem;
+  font-size: .88rem;
   font-weight: 600;
   color: #fff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 250px;
+  max-width: 200px;
 }
 .hud-road-type {
-  font-size: .7rem;
+  font-size: .68rem;
   font-weight: 400;
   color: var(--text-dim);
   margin-top: 1px;
 }
 
-/* Stop indicator */
-.hud-stop-card {
-  min-width: auto;
-  flex-direction: row;
-  gap: 6px;
-  padding: 8px 14px;
-  border-color: rgba(244 67 54 / .35);
-  background: rgba(244 67 54 / .12);
-  transition: opacity .3s ease, transform .3s ease;
-}
-.hud-stop-hidden {
-  opacity: 0;
-  transform: scale(0.9);
-  pointer-events: none;
-}
-.hud-stop-visible {
-  opacity: 1;
-  transform: scale(1);
-}
-.hud-stop-icon {
-  font-size: 1rem;
-  line-height: 1;
-}
-.hud-stop-label {
+/* Stop indicator — small badge below speed */
+.hud-stop-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(244 67 54 / .18);
+  border: 1px solid rgba(244 67 54 / .35);
   font-family: 'JetBrains Mono', monospace;
-  font-size: .78rem;
+  font-size: .65rem;
   font-weight: 600;
   color: #f44336;
   text-transform: uppercase;
-  letter-spacing: .06em;
+  letter-spacing: .04em;
+  transition: opacity .25s ease;
 }
+.hud-stop-badge span:first-child { font-size: .75rem; }
+.hud-stop-hidden { opacity: 0; }
+.hud-stop-visible { opacity: 1; }
 
 .hud-sub-row {
   display: flex;

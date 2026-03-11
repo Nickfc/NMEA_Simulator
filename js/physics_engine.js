@@ -19,7 +19,7 @@
      6.  Curvature limits   – Menger curvature → cornering-G speed cap
      7.  Grade limits       – uphill / downhill speed adjustments
      8.  Cap to limits      – min(vMax, roadSpeedLimit)
-     9.  Traffic stops      – real signals/stops → probabilistic fallback + braking/accel ramps
+     9.  Traffic stops      – real signals/stops → probabilistic fallback
     10.  Power + traction   – power-limited, traction-limited, friction-circle
     11.  Forward sweep      – accel-limited (kinematic v²=v₀²+2ad)
     12.  Backward sweep     – grade-aware, friction-circle braking
@@ -534,10 +534,7 @@ class PhysicsEngine {
     );
 
     // Skip probabilistic fallback if we have real stop data
-    if (hasRealData && realStopCount > 0) {
-      this._addStopRamps();
-      return;
-    }
+    if (hasRealData && realStopCount > 0) return;
 
     // Fallback: geometry-based intersection detection
     const STOP_PROB = {
@@ -569,40 +566,6 @@ class PhysicsEngine {
 
       this.pts[i].speed = 0;
       lastStopDist = this.pts[i].distance;
-    }
-
-    this._addStopRamps();
-  }
-
-  /**
-   * Create kinematic braking ramps before and acceleration ramps after
-   * each traffic stop so the vehicle visibly decelerates and accelerates.
-   */
-  _addStopRamps() {
-    const n = this.pts.length;
-    for (let i = 0; i < n; i++) {
-      if (!this._isStop[i]) continue;
-
-      // ── Braking ramp (backward from stop) ──
-      // v² = 2·b·d  →  at distance d before stop, v = √(2·b·d)
-      const bRamp = this.bMax * 0.75; // comfortable braking
-      for (let j = i - 1; j >= 0; j--) {
-        if (this._isStop[j]) break; // another stop
-        const dist = this.pts[i].distance - this.pts[j].distance;
-        const vBrake = Math.sqrt(2 * bRamp * dist);
-        if (vBrake >= this.pts[j].speed) break; // already slow enough
-        this.pts[j].speed = Math.min(this.pts[j].speed, vBrake);
-      }
-
-      // ── Acceleration ramp (forward from stop) ──
-      const aRamp = this.aMax * 0.6; // gentle acceleration from stop
-      for (let j = i + 1; j < n; j++) {
-        if (this._isStop[j]) break; // another stop
-        const dist = this.pts[j].distance - this.pts[i].distance;
-        const vAccel = Math.sqrt(2 * aRamp * dist);
-        if (vAccel >= this.pts[j].speed) break; // already at target
-        this.pts[j].speed = Math.min(this.pts[j].speed, vAccel);
-      }
     }
   }
 

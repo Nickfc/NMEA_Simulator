@@ -640,11 +640,7 @@ function handlePlay() {
       ? physicsEngine.processRoute()
       : physicsEngine.processRouteWithDynamicSpeed(1);
 
-    // Use physics-computed elapsed times for realistic pacing (including dwell at stops).
-    const totalPhysicsElapsed = processedRoutePoints.length > 1
-      ? processedRoutePoints[processedRoutePoints.length - 1].elapsed : 1;
-    // Time scale: if user specified a routeTime, remap physics time to that
-    const timeRemap = totalRouteTime ? (totalRouteTime / Math.max(totalPhysicsElapsed, 0.1)) : 1.0;
+    const updateRate = totalRouteTime ? (totalRouteTime * 1000) / processedRoutePoints.length : 1000;
 
     if (!animationMarker) {
       animationMarker = L.marker([processedRoutePoints[0].lat, processedRoutePoints[0].lon]).addTo(visualization.markerLayer);
@@ -652,24 +648,30 @@ function handlePlay() {
 
     let lastTimestamp = null;
     let accumulatedTime = 0;
+    let dwellRemaining = 0;  // ms of stop-dwell to burn through
 
     function animate(timestamp) {
       if (animationState !== "playing") return;
       if (lastTimestamp === null) lastTimestamp = timestamp;
       const delta = timestamp - lastTimestamp;
       lastTimestamp = timestamp;
-      // Accumulate real wall-clock time (scaled by playback rate)
-      accumulatedTime += delta * animationPlaybackRate;
+      accumulatedTime += delta;
 
-      // Advance through points using their actual elapsed-time gaps
-      while (animationIndex < processedRoutePoints.length - 1) {
-        const cur  = processedRoutePoints[animationIndex];
-        const next = processedRoutePoints[animationIndex + 1];
-        // How many ms this step should take in real time
-        const dtSec = (next.elapsed - cur.elapsed) * timeRemap;
-        const frameMs = Math.max(dtSec * 1000, 8); // floor of 8ms
-        if (accumulatedTime < frameMs) break;
-        accumulatedTime -= frameMs;
+      const frameInterval = updateRate / (animationPlaybackRate * parseFloat(frequencyInput.value));
+
+      // If dwelling at a stop, burn time there first
+      if (dwellRemaining > 0) {
+        dwellRemaining -= delta * animationPlaybackRate;
+        if (dwellRemaining > 0) {
+          animationFrameId = requestAnimationFrame(animate);
+          return;
+        }
+        // Dwell finished — reset accumulator and continue
+        accumulatedTime = 0;
+      }
+
+      while (accumulatedTime >= frameInterval && animationIndex < processedRoutePoints.length - 1) {
+        accumulatedTime -= frameInterval;
         const point = processedRoutePoints[animationIndex];
         const nextPoint = processedRoutePoints[Math.min(animationIndex + 1, processedRoutePoints.length - 1)];
 
@@ -680,9 +682,8 @@ function handlePlay() {
 
         speedDisplay.textContent = `${point.speed.toFixed(1)} km/h`;
         bearingDisplay.textContent = `${(point.bearing || GeoUtils.calculateBearing(point, nextPoint)).toFixed(1)}°`;
-        // Use physics elapsed time (remapped if user set a route time)
-        const elapsedSec = point.elapsed * timeRemap;
-        timeDisplay.textContent = new Date(startTime.getTime() + elapsedSec * 1000).toLocaleTimeString();
+        const elapsedTime = animationIndex * updateRate / parseFloat(frequencyInput.value);
+        timeDisplay.textContent = new Date(startTime.getTime() + elapsedTime).toLocaleTimeString();
         if (speedLimitDisplay) speedLimitDisplay.textContent = point.speedLimit ? `${Math.round(point.speedLimit)} km/h` : '—';
         if (roadNameDisplay) roadNameDisplay.textContent = point.roadName || '—';
         if (roadTypeDisplay) {
@@ -691,13 +692,18 @@ function handlePlay() {
           const icon = src === "overpass" ? "🛰️" : src === "osrm" ? "📡" : "📐";
           roadTypeDisplay.textContent = rt ? `${icon} ${rt.charAt(0).toUpperCase() + rt.slice(1)}` : '—';
         }
-        // Stop indicator
+        // Stop indicator + dwell pause
         if (stopIndicator) {
           if (point.isStop) {
             stopIndicator.classList.remove('hud-stop-hidden');
             stopIndicator.classList.add('hud-stop-visible');
             if (stopIcon) stopIcon.textContent = point.stopType === 'trafficLight' ? '🚥' : '🛑';
             if (stopLabel) stopLabel.textContent = point.stopType === 'trafficLight' ? 'Red Light' : 'Stop Sign';
+            // Pause at this stop — scale dwell so it's visible but not tedious
+            const baseDwell = point.stopType === 'trafficLight' ? 3000 : 1500; // ms
+            dwellRemaining = baseDwell;
+            animationIndex++;
+            break; // exit the while-loop so the dwell timer takes over
           } else {
             stopIndicator.classList.remove('hud-stop-visible');
             stopIndicator.classList.add('hud-stop-hidden');
