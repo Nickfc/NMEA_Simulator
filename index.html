@@ -65,11 +65,11 @@
 
       <!-- Closed loop -->
       <div class="panel" data-panel="loop">
-        <button class="panel-header" aria-expanded="true">
+        <button class="panel-header" aria-expanded="false">
           <span><i class="fas fa-circle-notch"></i> Closed Loop</span>
           <i class="fas fa-chevron-down panel-chevron"></i>
         </button>
-        <div class="panel-body open">
+        <div class="panel-body">
           <p class="hint">Generate a round-trip that starts &amp; ends at waypoint&nbsp;1. Drag the marker to regenerate.</p>
 
           <!-- Distance -->
@@ -441,10 +441,16 @@
         <span class="hud-label"><i class="fas fa-clock"></i> Time</span>
         <span id="timeDisplay" class="hud-value">—</span>
       </div>
+    </div>
+    <div class="hud-row hud-row-secondary">
       <div class="hud-card hud-road-card">
         <span class="hud-label"><i class="fas fa-road"></i> Road</span>
         <span id="roadNameDisplay" class="hud-value hud-road-name">—</span>
         <span id="roadTypeDisplay" class="hud-value hud-road-type">—</span>
+      </div>
+      <div id="stopIndicator" class="hud-card hud-stop-card hud-stop-hidden">
+        <span id="stopIcon" class="hud-stop-icon">🚥</span>
+        <span id="stopLabel" class="hud-stop-label">Stopped</span>
       </div>
     </div>
     <div class="hud-sub-row">

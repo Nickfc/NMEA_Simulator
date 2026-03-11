@@ -342,17 +342,19 @@ class RoutePlanner {
       if (ov.roadTypes && ov.roadTypes.length > 0) {
         RoutePlanner._snapWaysToRoute(coordinates, ov.roadTypes, (i, way) => {
           result.roadTypes[i] = way.highway;
-          if (way.name) result.roadNames[i] = way.name;
+          // Overpass way names as fallback (stored separately, OSRM takes priority)
+          if (way.name) result._overpassNames = result._overpassNames || new Array(n).fill(null);
+          if (way.name) result._overpassNames[i] = way.name;
         });
       }
     }
 
-    // ── 4. Fill road name gaps from OSRM maneuver step names ──
+    // ── 4. Road names — OSRM step names are primary (they follow the actual route) ──
     if (environmentData.maneuvers) {
       // Sort maneuvers by their snapped index
       const indexed = environmentData.maneuvers
         .map(m => ({ ...m, idx: RoutePlanner._nearestPointIndex(coordinates, m.lat, m.lon, 60) }))
-        .filter(m => m.idx >= 0 && m.name)
+        .filter(m => m.idx >= 0 && m.name && m.name.trim() !== "")
         .sort((a, b) => a.idx - b.idx);
 
       // For each maneuver, fill forward until the next maneuver
@@ -360,9 +362,19 @@ class RoutePlanner {
         const from = indexed[mi].idx;
         const to   = mi + 1 < indexed.length ? indexed[mi + 1].idx : n;
         for (let i = from; i < to; i++) {
-          if (!result.roadNames[i]) result.roadNames[i] = indexed[mi].name;
+          result.roadNames[i] = indexed[mi].name;
         }
       }
+    }
+
+    // ── 5. Fill gaps with Overpass way names (secondary source) ──
+    if (result._overpassNames) {
+      for (let i = 0; i < n; i++) {
+        if (!result.roadNames[i] && result._overpassNames[i]) {
+          result.roadNames[i] = result._overpassNames[i];
+        }
+      }
+      delete result._overpassNames;
     }
 
     // Forward-fill any remaining nulls in roadNames

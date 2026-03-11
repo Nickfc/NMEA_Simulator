@@ -58,6 +58,9 @@ const roadNameDisplay          = document.getElementById("roadNameDisplay");
 const roadTypeDisplay          = document.getElementById("roadTypeDisplay");
 const roadTypeSelect           = document.getElementById("roadType");
 const trafficDensitySelect     = document.getElementById("trafficDensity");
+const stopIndicator            = document.getElementById("stopIndicator");
+const stopIcon                 = document.getElementById("stopIcon");
+const stopLabel                = document.getElementById("stopLabel");
 
 // ── Core objects ──
 const conversion    = new Conversion();
@@ -471,6 +474,7 @@ function handleClearAll() {
   if (speedLimitDisplay) speedLimitDisplay.textContent = "—";
   if (roadNameDisplay) roadNameDisplay.textContent = "—";
   if (roadTypeDisplay) roadTypeDisplay.textContent = "—";
+  if (stopIndicator) { stopIndicator.classList.remove('hud-stop-visible'); stopIndicator.classList.add('hud-stop-hidden'); }
   document.getElementById("totalDistanceDisplay").textContent = "—";
   document.getElementById("estimatedTimeDisplay").textContent = "—";
 }
@@ -636,7 +640,11 @@ function handlePlay() {
       ? physicsEngine.processRoute()
       : physicsEngine.processRouteWithDynamicSpeed(1);
 
-    const updateRate = totalRouteTime ? (totalRouteTime * 1000) / processedRoutePoints.length : 1000;
+    // Use physics-computed elapsed times for realistic pacing (including dwell at stops).
+    const totalPhysicsElapsed = processedRoutePoints.length > 1
+      ? processedRoutePoints[processedRoutePoints.length - 1].elapsed : 1;
+    // Time scale: if user specified a routeTime, remap physics time to that
+    const timeRemap = totalRouteTime ? (totalRouteTime / Math.max(totalPhysicsElapsed, 0.1)) : 1.0;
 
     if (!animationMarker) {
       animationMarker = L.marker([processedRoutePoints[0].lat, processedRoutePoints[0].lon]).addTo(visualization.markerLayer);
@@ -650,12 +658,18 @@ function handlePlay() {
       if (lastTimestamp === null) lastTimestamp = timestamp;
       const delta = timestamp - lastTimestamp;
       lastTimestamp = timestamp;
-      accumulatedTime += delta;
+      // Accumulate real wall-clock time (scaled by playback rate)
+      accumulatedTime += delta * animationPlaybackRate;
 
-      const frameInterval = updateRate / (animationPlaybackRate * parseFloat(frequencyInput.value));
-
-      while (accumulatedTime >= frameInterval && animationIndex < processedRoutePoints.length - 1) {
-        accumulatedTime -= frameInterval;
+      // Advance through points using their actual elapsed-time gaps
+      while (animationIndex < processedRoutePoints.length - 1) {
+        const cur  = processedRoutePoints[animationIndex];
+        const next = processedRoutePoints[animationIndex + 1];
+        // How many ms this step should take in real time
+        const dtSec = (next.elapsed - cur.elapsed) * timeRemap;
+        const frameMs = Math.max(dtSec * 1000, 8); // floor of 8ms
+        if (accumulatedTime < frameMs) break;
+        accumulatedTime -= frameMs;
         const point = processedRoutePoints[animationIndex];
         const nextPoint = processedRoutePoints[Math.min(animationIndex + 1, processedRoutePoints.length - 1)];
 
@@ -666,8 +680,9 @@ function handlePlay() {
 
         speedDisplay.textContent = `${point.speed.toFixed(1)} km/h`;
         bearingDisplay.textContent = `${(point.bearing || GeoUtils.calculateBearing(point, nextPoint)).toFixed(1)}°`;
-        const elapsedTime = animationIndex * updateRate / parseFloat(frequencyInput.value);
-        timeDisplay.textContent = new Date(startTime.getTime() + elapsedTime).toLocaleTimeString();
+        // Use physics elapsed time (remapped if user set a route time)
+        const elapsedSec = point.elapsed * timeRemap;
+        timeDisplay.textContent = new Date(startTime.getTime() + elapsedSec * 1000).toLocaleTimeString();
         if (speedLimitDisplay) speedLimitDisplay.textContent = point.speedLimit ? `${Math.round(point.speedLimit)} km/h` : '—';
         if (roadNameDisplay) roadNameDisplay.textContent = point.roadName || '—';
         if (roadTypeDisplay) {
@@ -675,6 +690,18 @@ function handlePlay() {
           const src = point.roadSource;
           const icon = src === "overpass" ? "🛰️" : src === "osrm" ? "📡" : "📐";
           roadTypeDisplay.textContent = rt ? `${icon} ${rt.charAt(0).toUpperCase() + rt.slice(1)}` : '—';
+        }
+        // Stop indicator
+        if (stopIndicator) {
+          if (point.isStop) {
+            stopIndicator.classList.remove('hud-stop-hidden');
+            stopIndicator.classList.add('hud-stop-visible');
+            if (stopIcon) stopIcon.textContent = point.stopType === 'trafficLight' ? '🚥' : '🛑';
+            if (stopLabel) stopLabel.textContent = point.stopType === 'trafficLight' ? 'Red Light' : 'Stop Sign';
+          } else {
+            stopIndicator.classList.remove('hud-stop-visible');
+            stopIndicator.classList.add('hud-stop-hidden');
+          }
         }
         animationIndex++;
       }

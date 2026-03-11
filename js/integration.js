@@ -141,17 +141,20 @@ class Integration {
 
     for (let i = 0; i < coordinates.length; i++) {
       const c = coordinates[i];
+      const road = snappedEnv.roadNames ? snappedEnv.roadNames[i] : null;
       if (snappedEnv.trafficSignals[i]) {
+        const tip = road ? `🚦 Traffic Light — ${road}` : '🚦 Traffic Light';
         L.circleMarker([c.lat, c.lon], {
           radius: 5, fillColor: '#f44336', color: '#b71c1c',
           weight: 1.5, fillOpacity: 0.85,
-        }).bindTooltip('Traffic Light', { direction: 'top', className: 'traffic-tooltip' })
+        }).bindTooltip(tip, { direction: 'top', className: 'traffic-tooltip' })
          .addTo(this.trafficLayer);
       } else if (snappedEnv.stopSigns[i]) {
+        const tip = road ? `🛑 Stop Sign — ${road}` : '🛑 Stop Sign';
         L.circleMarker([c.lat, c.lon], {
           radius: 4.5, fillColor: '#ff9800', color: '#e65100',
           weight: 1.5, fillOpacity: 0.85,
-        }).bindTooltip('Stop Sign', { direction: 'top', className: 'traffic-tooltip' })
+        }).bindTooltip(tip, { direction: 'top', className: 'traffic-tooltip' })
          .addTo(this.trafficLayer);
       }
     }
