@@ -1,3 +1,7 @@
+/**
+ * Integration – manages the Leaflet map, numbered waypoint markers,
+ * and the routed polyline overlay.
+ */
 class Integration {
   constructor() {
     const mapContainer = document.getElementById("map");
@@ -11,26 +15,123 @@ class Integration {
       this.map = L.map._instances[mapContainer._leaflet_id];
     }
 
-    this.routePoints = [];
+    /** Ordered waypoints – each { lat, lon, label, marker } */
+    this.waypoints = [];
 
-    this.map.on("click", (event) => {
-      this.addRoutePoint(event.latlng);
-    });
+    /** Layer for waypoint markers */
+    this.waypointLayer = L.layerGroup().addTo(this.map);
 
+    /** Layer for the routed polyline */
     this.routeLayer = L.layerGroup().addTo(this.map);
+
+    /** The polyline drawn after routing */
+    this.routePolyline = null;
+
+    /** Callback fired whenever the waypoint list changes */
+    this.onWaypointsChanged = null;
+
+    // Click-to-add waypoint
+    this.map.on("click", (e) => {
+      this.addWaypoint(e.latlng.lat, e.latlng.lng);
+    });
   }
 
-  addRoutePoint(latlng) {
-    this.routePoints.push(latlng);
+  /* ─── Waypoint management ─── */
 
-    if (this.routePoints.length > 1) {
-      const lastIndex = this.routePoints.length - 1;
-      const polyline = L.polyline([this.routePoints[lastIndex - 1], this.routePoints[lastIndex]], { color: "#4f8cff", weight: 3, opacity: 0.8 }).addTo(this.routeLayer);
+  /** Create a numbered circle marker for a waypoint. */
+  _createMarker(wp, index) {
+    const icon = L.divIcon({
+      className: "wp-marker",
+      html: `<span>${index + 1}</span>`,
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
+    });
+
+    const marker = L.marker([wp.lat, wp.lon], {
+      icon,
+      draggable: true,
+      zIndexOffset: 1000,
+    });
+
+    marker.on("dragend", (e) => {
+      const pos = e.target.getLatLng();
+      wp.lat = pos.lat;
+      wp.lon = pos.lng;
+      this._notifyChange();
+    });
+
+    // Right-click to remove
+    marker.on("contextmenu", () => {
+      this.removeWaypoint(this.waypoints.indexOf(wp));
+    });
+
+    marker.addTo(this.waypointLayer);
+    return marker;
+  }
+
+  /** Rebuild all markers (renumber after add/remove/reorder). */
+  _rebuildMarkers() {
+    this.waypointLayer.clearLayers();
+    this.waypoints.forEach((wp, i) => {
+      wp.marker = this._createMarker(wp, i);
+    });
+  }
+
+  _notifyChange() {
+    if (typeof this.onWaypointsChanged === "function") {
+      this.onWaypointsChanged(this.waypoints);
     }
   }
 
-  clearRoute() {
+  /** Add a waypoint at the end. Returns the waypoint object. */
+  addWaypoint(lat, lon, label) {
+    const wp = { lat, lon, label: label || "", marker: null };
+    this.waypoints.push(wp);
+    this._rebuildMarkers();
+    this._notifyChange();
+    return wp;
+  }
+
+  /** Remove a waypoint by index. */
+  removeWaypoint(index) {
+    if (index < 0 || index >= this.waypoints.length) return;
+    this.waypoints.splice(index, 1);
+    this._rebuildMarkers();
+    this._notifyChange();
+  }
+
+  /** Move a waypoint from one index to another (drag-reorder in list). */
+  reorderWaypoint(fromIndex, toIndex) {
+    if (fromIndex === toIndex) return;
+    const [wp] = this.waypoints.splice(fromIndex, 1);
+    this.waypoints.splice(toIndex, 0, wp);
+    this._rebuildMarkers();
+    this._notifyChange();
+  }
+
+  /** Draw the routed polyline from an array of {lat,lon} coords. */
+  drawRoute(coords) {
     this.routeLayer.clearLayers();
-    this.routePoints = [];
+    const latlngs = coords.map((c) => [c.lat, c.lon]);
+    this.routePolyline = L.polyline(latlngs, {
+      color: "#4f8cff",
+      weight: 4,
+      opacity: 0.85,
+    }).addTo(this.routeLayer);
+    this.map.fitBounds(this.routePolyline.getBounds(), { padding: [50, 50] });
+  }
+
+  /** Clear everything. */
+  clearRoute() {
+    this.waypoints = [];
+    this.waypointLayer.clearLayers();
+    this.routeLayer.clearLayers();
+    this.routePolyline = null;
+    this._notifyChange();
+  }
+
+  /** Get simple waypoint coords for the planner [{lat,lon}]. */
+  getWaypointCoords() {
+    return this.waypoints.map((wp) => ({ lat: wp.lat, lon: wp.lon }));
   }
 }

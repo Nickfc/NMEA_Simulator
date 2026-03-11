@@ -30,13 +30,81 @@
 
     <div class="sidebar-content">
 
-      <!-- Upload Section -->
-      <div class="panel" data-panel="upload">
+      <!-- ═══ STEP 1 — Route Planning ═══ -->
+      <div class="step-badge">① Route Plan</div>
+
+      <!-- Address search -->
+      <div class="panel" data-panel="search">
         <button class="panel-header" aria-expanded="true">
-          <span><i class="fas fa-file-upload"></i> Import Route</span>
+          <span><i class="fas fa-magnifying-glass-location"></i> Add Waypoints</span>
           <i class="fas fa-chevron-down panel-chevron"></i>
         </button>
         <div class="panel-body open">
+          <div class="search-box">
+            <i class="fas fa-search search-icon"></i>
+            <input type="text" id="addressSearch" placeholder="Search address or place…" autocomplete="off" />
+            <button id="searchBtn" class="search-go" title="Search"><i class="fas fa-arrow-right"></i></button>
+          </div>
+          <ul id="searchResults" class="search-results hidden"></ul>
+          <p class="hint"><i class="fas fa-mouse-pointer"></i> Or click the map to drop waypoints. Right-click a marker to remove it.</p>
+        </div>
+      </div>
+
+      <!-- Waypoint list -->
+      <div class="panel" data-panel="waypoints">
+        <button class="panel-header" aria-expanded="true">
+          <span><i class="fas fa-list-ol"></i> Waypoints <span id="wpCount" class="badge">0</span></span>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </button>
+        <div class="panel-body open">
+          <ul id="waypointList" class="waypoint-list">
+            <li class="wp-empty">No waypoints yet — search or click the map</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Closed loop -->
+      <div class="panel" data-panel="loop">
+        <button class="panel-header" aria-expanded="true">
+          <span><i class="fas fa-circle-notch"></i> Closed Loop</span>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </button>
+        <div class="panel-body open">
+          <p class="hint">Generate a round-trip that starts &amp; ends at waypoint&nbsp;1.</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="loopDistance">Target distance <span class="unit">(km)</span></label>
+              <input type="number" id="loopDistance" min="0.5" step="0.5" value="5" />
+            </div>
+            <div class="form-group" style="display:flex;align-items:flex-end">
+              <button id="generateLoop" class="btn btn-accent" style="margin-bottom:12px">
+                <i class="fas fa-rotate"></i> Generate Loop
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Route action -->
+      <div class="sidebar-actions">
+        <button id="routeWaypoints" class="btn btn-primary btn-lg">
+          <i class="fas fa-route"></i> Route Between Waypoints
+        </button>
+        <div id="routeStatus" class="route-status hidden"></div>
+      </div>
+
+      <hr class="step-divider">
+
+      <!-- ═══ STEP 2 — Simulate ═══ -->
+      <div class="step-badge">② Simulate</div>
+
+      <!-- Import (file) -->
+      <div class="panel" data-panel="upload">
+        <button class="panel-header" aria-expanded="false">
+          <span><i class="fas fa-file-upload"></i> Import GPX / KML</span>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </button>
+        <div class="panel-body">
           <div id="dropZone" class="drop-zone">
             <i class="fas fa-cloud-arrow-up"></i>
             <p>Drag & drop <strong>GPX</strong> or <strong>KML</strong></p>
@@ -54,7 +122,7 @@
       <!-- Route Settings -->
       <div class="panel" data-panel="route">
         <button class="panel-header" aria-expanded="true">
-          <span><i class="fas fa-route"></i> Route Settings</span>
+          <span><i class="fas fa-sliders"></i> Simulation Settings</span>
           <i class="fas fa-chevron-down panel-chevron"></i>
         </button>
         <div class="panel-body open">
@@ -110,11 +178,11 @@
 
       <!-- Conditions -->
       <div class="panel" data-panel="conditions">
-        <button class="panel-header" aria-expanded="true">
+        <button class="panel-header" aria-expanded="false">
           <span><i class="fas fa-cloud-sun"></i> Conditions</span>
           <i class="fas fa-chevron-down panel-chevron"></i>
         </button>
-        <div class="panel-body open">
+        <div class="panel-body">
           <div class="form-group">
             <label for="roadConditions">Road Surface</label>
             <div class="chip-group" data-for="roadConditions">
@@ -163,11 +231,11 @@
 
       <!-- Playback -->
       <div class="panel" data-panel="playback">
-        <button class="panel-header" aria-expanded="true">
+        <button class="panel-header" aria-expanded="false">
           <span><i class="fas fa-clapperboard"></i> Playback</span>
           <i class="fas fa-chevron-down panel-chevron"></i>
         </button>
-        <div class="panel-body open">
+        <div class="panel-body">
           <div class="form-group">
             <label for="animationPlaybackRate">
               Speed: <span id="playbackRateValue" class="accent">1.0×</span>
@@ -178,13 +246,13 @@
         </div>
       </div>
 
-      <!-- Action Buttons -->
+      <!-- Simulate & Export actions -->
       <div class="sidebar-actions">
         <button id="generateNMEA" class="btn btn-primary btn-lg">
           <i class="fas fa-bolt"></i> Generate NMEA
         </button>
         <button id="clearRouteButton" class="btn btn-outline">
-          <i class="fas fa-eraser"></i> Clear Route
+          <i class="fas fa-eraser"></i> Clear All
         </button>
         <div class="btn-row">
           <button id="downloadNMEA" class="btn btn-secondary" disabled>
@@ -241,6 +309,7 @@
   <script src="js/conversion.js"></script>
   <script src="js/customization.js"></script>
   <script src="js/physics_engine.js"></script>
+  <script src="js/route_planner.js"></script>
   <script src="js/integration.js"></script>
   <script src="js/visualization.js"></script>
   <script src="js/app.js"></script>
