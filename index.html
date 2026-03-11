@@ -290,6 +290,38 @@
               <option value="conservative">Conservative</option>
             </select>
           </div>
+          <div class="form-group">
+            <label>Road Type</label>
+            <div class="chip-group" data-for="roadType">
+              <button class="chip active" data-value="auto"><i class="fas fa-wand-magic-sparkles"></i> Auto</button>
+              <button class="chip" data-value="highway"><i class="fas fa-road"></i> Highway</button>
+              <button class="chip" data-value="urban"><i class="fas fa-city"></i> Urban</button>
+              <button class="chip" data-value="residential"><i class="fas fa-house"></i> Residential</button>
+              <button class="chip" data-value="rural"><i class="fas fa-tree"></i> Rural</button>
+            </div>
+            <select id="roadType" class="hidden-select">
+              <option value="auto" selected>Auto</option>
+              <option value="highway">Highway</option>
+              <option value="urban">Urban</option>
+              <option value="residential">Residential</option>
+              <option value="rural">Rural</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Traffic Density</label>
+            <div class="chip-group" data-for="trafficDensity">
+              <button class="chip" data-value="none"><i class="fas fa-road"></i> None</button>
+              <button class="chip" data-value="light"><i class="fas fa-car-side"></i> Light</button>
+              <button class="chip active" data-value="moderate"><i class="fas fa-traffic-light"></i> Moderate</button>
+              <button class="chip" data-value="heavy"><i class="fas fa-road-barrier"></i> Heavy</button>
+            </div>
+            <select id="trafficDensity" class="hidden-select">
+              <option value="none">None</option>
+              <option value="light">Light</option>
+              <option value="moderate" selected>Moderate</option>
+              <option value="heavy">Heavy</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -352,6 +384,14 @@
       <div class="hud-card">
         <span class="hud-label"><i class="fas fa-clock"></i> Time</span>
         <span id="timeDisplay" class="hud-value">—</span>
+      </div>
+      <div class="hud-card">
+        <span class="hud-label"><i class="fas fa-signs-post"></i> Limit</span>
+        <span id="speedLimitDisplay" class="hud-value">—</span>
+      </div>
+      <div class="hud-card">
+        <span class="hud-label"><i class="fas fa-road"></i> Road</span>
+        <span id="roadTypeDisplay" class="hud-value">—</span>
       </div>
     </div>
     <div class="hud-sub-row">

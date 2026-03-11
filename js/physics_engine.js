@@ -1,39 +1,40 @@
 /* ═══════════════════════════════════════════════════════════════
-   PhysicsEngine v3 – enhanced vehicle dynamics simulation
+   PhysicsEngine v4 – environment-aware vehicle dynamics simulation
    ═══════════════════════════════════════════════════════════════
 
-   v3 enhancements over v2:
-     ① Grade smoothing      – windowed moving-average denoises GPS elevation
-     ② Altitude air density  – barometric ρ(h) per point
-     ③ Traction-limited accel– μ·g caps low-speed acceleration
-     ④ Friction circle       – cornering grip reduces accel / braking budget
-     ⑤ Grade-aware braking   – downhill reduces effective deceleration
-     ⑥ Speed-dependent Cr    – rolling resistance grows with speed
-     ⑦ Slope-adjusted Froll  – normal force varies with cos(θ)
-     ⑧ Post-condition sweeps – re-verify kinematic feasibility after grip loss
-     ⑨ Jerk limiting         – smooth harsh accel transitions
+   v4 adds environment awareness:
+     ⓐ Road-type classification – auto-detect highway / urban / residential /
+        rural from route geometry, or accept user override
+     ⓑ Per-segment speed limits – realistic caps per road type
+     ⓒ Traffic lights & stop signs – probabilistic stops at detected
+        intersections based on traffic density setting
 
-   Pipeline (16 passes):
+   Pipeline (20 passes):
      1.  Geometry           – segment distances, turn angles, raw grades
      2.  Grade smoothing    – 7-point windowed average on raw grades
      3.  Air density        – per-point ρ from barometric formula
-     4.  Curvature limits   – Menger curvature → cornering-G speed cap
-     5.  Grade limits       – uphill / downhill speed adjustments
-     6.  Cap to vMax        – hard vehicle ceiling
-     7.  Power + traction   – power-limited, traction-limited, friction-circle
-     8.  Forward sweep      – accel-limited (kinematic v²=v₀²+2ad)
-     9.  Backward sweep     – grade-aware, friction-circle braking
-    10.  Conditions          – road / weather / driver multipliers
-    11.  Post-cond sweeps   – re-verify accel & braking under reduced grip
-    12.  Jerk limiting      – smooth extreme accel sign-changes
-    13.  Enforce min speed  – floor at idle / crawl
-    14.  Timeline           – elapsed seconds + per-point acceleration
-    15.  Bearings           – heading at each point
-    16.  Unit conversion    – m/s → km/h
+     4.  Road classification– auto-detect or override road type per point
+     5.  Speed limits       – assign per-point speed limits from road type
+     6.  Curvature limits   – Menger curvature → cornering-G speed cap
+     7.  Grade limits       – uphill / downhill speed adjustments
+     8.  Cap to limits      – min(vMax, roadSpeedLimit)
+     9.  Traffic stops      – red lights & stop signs at intersections
+    10.  Power + traction   – power-limited, traction-limited, friction-circle
+    11.  Forward sweep      – accel-limited (kinematic v²=v₀²+2ad)
+    12.  Backward sweep     – grade-aware, friction-circle braking
+    13.  Conditions         – road / weather / driver multipliers
+    14.  Post-cond sweeps   – re-verify accel & braking under reduced grip
+    15.  Jerk limiting      – smooth extreme accel sign-changes
+    16.  Enforce min speed  – floor at idle / crawl (respects stops)
+    17.  Timeline           – elapsed seconds + dwell time at stops
+    18.  Bearings           – heading at each point
+    19.  Annotate env       – tag output with roadType, speedLimit, stopType
+    20.  Unit conversion    – m/s → km/h
 
    Output per point:
      { lat, lon, ele, speed (km/h), bearing (°), acceleration (m/s²),
-       distance (m cumulative), elapsed (s cumulative), grade (rise/run) }
+       distance (m cumulative), elapsed (s cumulative), grade (rise/run),
+       roadType, speedLimit (km/h), isStop, stopType }
    ═══════════════════════════════════════════════════════════════ */
 
 class PhysicsEngine {
@@ -44,7 +45,7 @@ class PhysicsEngine {
    * @param {string} weatherConditions– clear | rain | snow | fog
    * @param {string} driverBehavior   – aggressive | normal | conservative
    */
-  constructor(routePoints, vehicleProfile, roadConditions, weatherConditions, driverBehavior) {
+  constructor(routePoints, vehicleProfile, roadConditions, weatherConditions, driverBehavior, environmentConfig) {
     // Deep-clone – never mutate caller's data
     this.pts = routePoints.map((p) => ({
       lat: p.lat,
@@ -77,32 +78,42 @@ class PhysicsEngine {
 
     this.G    = 9.81;
     this.rho0 = 1.225;  // sea-level air density kg/m³
+
+    // ── Environment configuration ──
+    const env = environmentConfig || {};
+    this.envRoadType        = env.roadType        || "auto";
+    this.envTrafficDensity  = env.trafficDensity  || "moderate";
+    this.envSpeedLimitScale = env.speedLimitScale  || 1.0;
   }
 
   /* ═══════════════════════════════════════════
      PUBLIC API
      ═══════════════════════════════════════════ */
 
-  /** Full 16-pass pipeline – returns enriched route points. */
+  /** Full 20-pass pipeline – returns enriched route points. */
   processRoute() {
     if (this.pts.length < 2) return this.pts;
 
     this._geometryPass();            //  1
-    this._smoothGrades();            //  2  ★ new
-    this._computeAirDensity();       //  3  ★ new
-    this._curvatureSpeedLimits();    //  4
-    this._gradeSpeedLimits();        //  5
-    this._capToVMax();               //  6
-    this._powerTractionAccel();      //  7  ★ enhanced
-    this._forwardSweep();            //  8
-    this._backwardSweep();           //  9  ★ enhanced
-    this._applyConditions();         // 10  ★ enhanced
-    this._postConditionSweeps();     // 11  ★ new
-    this._jerkLimitPass();           // 12  ★ new
-    this._enforceMinSpeed();         // 13
-    this._computeTimeline();         // 14
-    this._setBearings();             // 15
-    this._convertUnits();            // 16
+    this._smoothGrades();            //  2
+    this._computeAirDensity();       //  3
+    this._classifyRoadSegments();    //  4  ★ env
+    this._assignSpeedLimits();       //  5  ★ env
+    this._curvatureSpeedLimits();    //  6
+    this._gradeSpeedLimits();        //  7
+    this._capToSpeedLimits();        //  8  ★ env (was _capToVMax)
+    this._applyTrafficStops();       //  9  ★ env
+    this._powerTractionAccel();      // 10
+    this._forwardSweep();            // 11
+    this._backwardSweep();           // 12
+    this._applyConditions();         // 13
+    this._postConditionSweeps();     // 14
+    this._jerkLimitPass();           // 15
+    this._enforceMinSpeed();         // 16
+    this._computeTimeline();         // 17
+    this._setBearings();             // 18
+    this._annotateEnvironment();     // 19  ★ env
+    this._convertUnits();            // 20
 
     return this.pts;
   }
@@ -205,7 +216,94 @@ class PhysicsEngine {
   }
 
   /* ═══════════════════════════════════════════
-     PASS 4 – Cornering speed limits (Menger curvature + lateral-G)
+     PASS 4 – Road segment classification  ★ ENV
+     ═══════════════════════════════════════════
+     Auto-detect road type from local geometry (segment
+     distances + heading change rate).  A sliding-window
+     "road score" is smoothed and classified into:
+       highway  → long straight segments
+       rural    → medium segments, gentle curves
+       urban    → short segments, frequent turns
+       residential → very short, many sharp turns
+     User can override via environmentConfig.roadType.
+  */
+  _classifyRoadSegments() {
+    const n = this.pts.length;
+    this._roadClass = new Array(n);
+
+    // User override: all points get the same road type
+    if (this.envRoadType !== "auto") {
+      this._roadClass.fill(this.envRoadType);
+      return;
+    }
+
+    // ── Auto-detect from geometry ──
+    const windowHalf = 15;
+    const rawScore = new Float64Array(n);
+
+    for (let i = 0; i < n; i++) {
+      let sumDist = 0, sumStraight = 0, count = 0;
+      const lo = Math.max(1, i - windowHalf);
+      const hi = Math.min(n - 1, i + windowHalf);
+      for (let j = lo; j <= hi; j++) {
+        sumDist += this.segDist[j];
+        // Straightness: 1 = perfectly straight, 0 = U-turn
+        sumStraight += (1 - Math.min(this.turnAngle[j] / 90, 1));
+        count++;
+      }
+      const avgDist = count > 0 ? sumDist / count : 0;
+      const straightness = count > 0 ? sumStraight / count : 0.5;
+
+      // Combined score (0–1): long straight = high, short curvy = low
+      rawScore[i] = Math.min(avgDist / 120, 1) * 0.5 + straightness * 0.5;
+    }
+
+    // Smooth the score to avoid road-type flickering
+    const smooth = new Float64Array(n);
+    const smoothHalf = 10;
+    for (let i = 0; i < n; i++) {
+      let sum = 0, cnt = 0;
+      const lo = Math.max(0, i - smoothHalf);
+      const hi = Math.min(n - 1, i + smoothHalf);
+      for (let j = lo; j <= hi; j++) { sum += rawScore[j]; cnt++; }
+      smooth[i] = sum / cnt;
+    }
+
+    // Classify
+    for (let i = 0; i < n; i++) {
+      const s = smooth[i];
+      if      (s > 0.82) this._roadClass[i] = "highway";
+      else if (s > 0.62) this._roadClass[i] = "rural";
+      else if (s > 0.38) this._roadClass[i] = "urban";
+      else               this._roadClass[i] = "residential";
+    }
+  }
+
+  /* ═══════════════════════════════════════════
+     PASS 5 – Speed limits from road type  ★ ENV
+     ═══════════════════════════════════════════
+     Realistic speed limits per road type, capped
+     by the vehicle’s own top speed.
+  */
+  _assignSpeedLimits() {
+    const n = this.pts.length;
+    this._speedLimit = new Float64Array(n);
+
+    const LIMITS = {
+      highway:     110 / 3.6,   // m/s
+      rural:        80 / 3.6,
+      urban:        50 / 3.6,
+      residential:  30 / 3.6,
+    };
+
+    for (let i = 0; i < n; i++) {
+      const base = LIMITS[this._roadClass[i]] || LIMITS.urban;
+      this._speedLimit[i] = Math.min(base * this.envSpeedLimitScale, this.vMax);
+    }
+  }
+
+  /* ═══════════════════════════════════════════
+     PASS 6 – Cornering speed limits (Menger curvature + lateral-G)
      ═══════════════════════════════════════════
      κ = 2·sin(θ/2) / chord   →   v_corner = √(a_lat · r)
      Stores curvature per point for friction-circle use later.
@@ -276,15 +374,92 @@ class PhysicsEngine {
     }
   }
 
-  /** Hard-cap to vehicle max. */
-  _capToVMax() {
+  /** Cap speed to min(vMax, road speed limit). */
+  _capToSpeedLimits() {
     for (let i = 0; i < this.pts.length; i++) {
-      this.pts[i].speed = Math.min(this.pts[i].speed, this.vMax);
+      const limit = this._speedLimit ? this._speedLimit[i] : this.vMax;
+      this.pts[i].speed = Math.min(this.pts[i].speed, this.vMax, limit);
     }
   }
 
   /* ═══════════════════════════════════════════
-     PASS 7 – Power + traction + friction-circle  ★ ENHANCED
+     PASS 9 – Traffic lights & stop signs  ★ ENV
+     ═══════════════════════════════════════════
+     Detect intersections (significant turn angle) and
+     probabilistically place stops based on traffic density.
+     Urban intersections → traffic lights (longer wait).
+     Residential intersections → stop signs (shorter wait).
+     Highways never have stops.
+  */
+  _applyTrafficStops() {
+    const n = this.pts.length;
+    this._isStop = new Uint8Array(n);       // 0=none, 1=traffic light, 2=stop sign
+    this._stopDuration = new Float64Array(n); // seconds of dwell
+
+    if (this.envTrafficDensity === "none") return;
+
+    // Probability of a stop at each detected intersection by road type
+    const STOP_PROB = {
+      light:    { highway: 0, rural: 0.05, urban: 0.25, residential: 0.15 },
+      moderate: { highway: 0, rural: 0.12, urban: 0.50, residential: 0.35 },
+      heavy:    { highway: 0, rural: 0.20, urban: 0.75, residential: 0.55 },
+    };
+
+    // Dwell (wait) duration range in seconds
+    const DWELL = {
+      light:    { min: 3,  max: 15 },
+      moderate: { min: 8,  max: 30 },
+      heavy:    { min: 15, max: 45 },
+    };
+
+    const minSpacing = 120; // min metres between stops
+    let lastStopDist = -minSpacing * 2;
+
+    for (let i = 3; i < n - 3; i++) {
+      const road = this._roadClass[i];
+      if (road === "highway") continue;
+
+      // Only place stops at significant turns (intersections)
+      const threshold = road === "residential" ? 22 : 30;
+      if (this.turnAngle[i] < threshold) continue;
+
+      // Enforce minimum spacing between stops
+      if (this.pts[i].distance - lastStopDist < minSpacing) continue;
+
+      // Deterministic random decision based on point geometry
+      const rng = this._simpleHash(i);
+      const prob = (STOP_PROB[this.envTrafficDensity] || {})[road] || 0;
+      if (rng >= prob) continue;
+
+      // Mark stop: urban → traffic light, residential → stop sign
+      this._isStop[i] = (road === "urban" || road === "rural") ? 1 : 2;
+
+      // Dwell time — traffic lights wait longer than stop signs
+      const dwell = DWELL[this.envTrafficDensity] || DWELL.moderate;
+      const baseDwell = dwell.min + this._simpleHash(i + 7919) * (dwell.max - dwell.min);
+      this._stopDuration[i] = this._isStop[i] === 2
+        ? Math.min(baseDwell, 8)   // stop signs: max ~8 s
+        : baseDwell;               // traffic lights: full range
+
+      // Anchor speed to 0 — sweeps will create natural decel/accel
+      this.pts[i].speed = 0;
+
+      lastStopDist = this.pts[i].distance;
+    }
+  }
+
+  /** Deterministic hash for point index → [0, 1). */
+  _simpleHash(idx) {
+    const p = this.pts[Math.min(idx, this.pts.length - 1)];
+    let h = 2166136261 >>> 0;
+    h = ((h ^ idx) * 16777619) >>> 0;
+    h = ((h ^ (Math.floor(p.lat * 1e5) & 0xFFFF)) * 16777619) >>> 0;
+    h = ((h ^ (Math.floor(p.lon * 1e5) & 0xFFFF)) * 16777619) >>> 0;
+    return (h >>> 0) / 4294967296;
+  }
+
+  /* ═══════════════════════════════════════════
+     PASS 10 – Power + traction + friction-circle  ★ ENHANCED
      ═══════════════════════════════════════════
      Three limiters per point:
        a) Power-limited:     a = (P/v − Fdrag − Froll − Fgrade) / m
@@ -556,16 +731,18 @@ class PhysicsEngine {
   }
 
   /* ═══════════════════════════════════════════
-     PASS 13 – Enforce minimum speed
+     PASS 16 – Enforce minimum speed (respects stops)
      ═══════════════════════════════════════════ */
   _enforceMinSpeed() {
     for (let i = 0; i < this.pts.length; i++) {
+      // Let traffic stops stay at 0 — they represent actual vehicle stops
+      if (this._isStop && this._isStop[i]) continue;
       this.pts[i].speed = Math.max(this.pts[i].speed, this.idleSpeed);
     }
   }
 
   /* ═══════════════════════════════════════════
-     PASS 14 – Compute elapsed time & acceleration
+     PASS 17 – Compute elapsed time, dwell & acceleration
      ═══════════════════════════════════════════ */
   _computeTimeline() {
     let cumTime = 0;
@@ -580,6 +757,12 @@ class PhysicsEngine {
       const dt = vAvg > 0.01 ? d / vAvg : 0;
 
       cumTime += dt;
+
+      // Dwell time at traffic stops (red light / stop sign wait)
+      if (this._stopDuration && this._stopDuration[i] > 0) {
+        cumTime += this._stopDuration[i];
+      }
+
       this.pts[i].elapsed = cumTime;
       this.pts[i].acceleration = dt > 0.001 ? (v1 - v0) / dt : 0;
     }
@@ -598,7 +781,24 @@ class PhysicsEngine {
   }
 
   /* ═══════════════════════════════════════════
-     PASS 16 – Convert m/s → km/h
+     PASS 19 – Annotate output with environment info  ★ ENV
+     ═══════════════════════════════════════════
+     Tag each output point with roadType, speedLimit
+     (already in km/h), and stop information so the
+     HUD and animation can display them.
+  */
+  _annotateEnvironment() {
+    for (let i = 0; i < this.pts.length; i++) {
+      this.pts[i].roadType   = this._roadClass  ? this._roadClass[i]           : "urban";
+      this.pts[i].speedLimit = this._speedLimit  ? this._speedLimit[i] * 3.6   : this.vMax * 3.6;
+      this.pts[i].isStop     = this._isStop      ? this._isStop[i] > 0         : false;
+      this.pts[i].stopType   = this._isStop && this._isStop[i] === 1 ? "trafficLight" :
+                               this._isStop && this._isStop[i] === 2 ? "stopSign"     : null;
+    }
+  }
+
+  /* ═══════════════════════════════════════════
+     PASS 20 – Convert m/s → km/h
      ═══════════════════════════════════════════ */
   _convertUnits() {
     for (let i = 0; i < this.pts.length; i++) {

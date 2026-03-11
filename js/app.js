@@ -47,6 +47,10 @@ const randomSeedBtn            = document.getElementById("randomSeed");
 const speedDisplay             = document.getElementById("speedDisplay");
 const bearingDisplay           = document.getElementById("bearingDisplay");
 const timeDisplay              = document.getElementById("timeDisplay");
+const speedLimitDisplay        = document.getElementById("speedLimitDisplay");
+const roadTypeDisplay          = document.getElementById("roadTypeDisplay");
+const roadTypeSelect           = document.getElementById("roadType");
+const trafficDensitySelect     = document.getElementById("trafficDensity");
 
 // ── Core objects ──
 const conversion    = new Conversion();
@@ -367,6 +371,8 @@ function handleClearAll() {
   speedDisplay.textContent = "—";
   bearingDisplay.textContent = "—";
   timeDisplay.textContent = "—";
+  if (speedLimitDisplay) speedLimitDisplay.textContent = "—";
+  if (roadTypeDisplay) roadTypeDisplay.textContent = "—";
   document.getElementById("totalDistanceDisplay").textContent = "—";
   document.getElementById("estimatedTimeDisplay").textContent = "—";
 }
@@ -388,7 +394,11 @@ async function handleGenerateNMEA() {
     vehicleProfile,
     roadConditionsSelect.value,
     weatherConditionsSelect.value,
-    driverBehaviorSelect.value
+    driverBehaviorSelect.value,
+    {
+      roadType: roadTypeSelect.value,
+      trafficDensity: trafficDensitySelect.value,
+    }
   );
 
   const processedRoutePoints = physicsEngine.processRoute();
@@ -515,7 +525,11 @@ function handlePlay() {
       customization.getVehicleProfile(vehicleType),
       roadConditionsSelect.value,
       weatherConditionsSelect.value,
-      driverBehaviorSelect.value
+      driverBehaviorSelect.value,
+      {
+        roadType: roadTypeSelect.value,
+        trafficDensity: trafficDensitySelect.value,
+      }
     );
 
     const processedRoutePoints = speedOrTime === "routeTime"
@@ -554,6 +568,11 @@ function handlePlay() {
         bearingDisplay.textContent = `${(point.bearing || GeoUtils.calculateBearing(point, nextPoint)).toFixed(1)}°`;
         const elapsedTime = animationIndex * updateRate / parseFloat(frequencyInput.value);
         timeDisplay.textContent = new Date(startTime.getTime() + elapsedTime).toLocaleTimeString();
+        if (speedLimitDisplay) speedLimitDisplay.textContent = point.speedLimit ? `${Math.round(point.speedLimit)} km/h` : '—';
+        if (roadTypeDisplay) {
+          const rt = point.roadType;
+          roadTypeDisplay.textContent = rt ? rt.charAt(0).toUpperCase() + rt.slice(1) : '—';
+        }
         animationIndex++;
       }
 
