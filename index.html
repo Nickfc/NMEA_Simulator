@@ -3,111 +3,239 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NMEA Data Generator</title>
+  <title>NMEA Simulator</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
   <link rel="stylesheet" href="css/styles.css" />
-  <link href="https://fonts.googleapis.com/css2?family=Raleway&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
+
+  <!-- Top progress bar -->
   <div class="progress-container">
-    <progress id="progressBar" value="0"></progress>
+    <div id="progressBar" class="progress-bar" style="width: 0%"></div>
   </div>
-  <div id="sidebar">
-    <h1>NMEA Data Generator</h1>
-    <div class="file-input">
-      <div class="group">
-        <h3>Upload File</h3>
-        <label for="file">Upload GPX or KML file:</label>
-        <input type="file" id="file" accept=".gpx,.kml" />
+
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <i class="fas fa-satellite-dish"></i>
+        <span>NMEA Simulator</span>
       </div>
-      <hr>
-      <div class="group">
-        <h3>Route Settings</h3>
-        <label for="vehicleType">Vehicle type:</label>
-        <select id="vehicleType">
-          <option value="car">Car</option>
-          <option value="bicycle">Bicycle</option>
-          <option value="motorcycle">Motorcycle</option>
-          <option value="truck">Truck</option>
-          <option value="electricVehicle">Electric Vehicle</option>
-          <option value="walking">Walking</option>
-          <option value="electricScooter">Electric Scooter</option>
-          <option value="bus">Bus</option>
-          <option value="van">Van</option>
-          <option value="heavyTruck">Heavy Truck</option>
-          <option value="moped">Moped</option>
-          <option value="skateboard">Skateboard</option>
-          <option value="wheelchair">Wheelchair</option>
-          <option value="segway">Segway</option>
-          <option value="tram">Tram</option>
-        </select>
-        <label for="totalRouteTime">Total route time (minutes):</label>
-        <input type="number" id="totalRouteTime" min="1" step="1" value="60" />
-        <label for="frequency">Frequency (points per second):</label>
-        <input type="number" id="frequency" min="0.1" step="0.1" value="1" />
-        <label for="speedOrTime">Choose speed or time:</label>
-        <select id="speedOrTime">
-          <option value="topSpeed">Top Speed</option>
-          <option value="routeTime">Route Time</option>
-        </select>
-        <label for="startTime">Starting time:</label>
-        <input type="datetime-local" id="startTime" />
+      <button id="sidebarToggle" class="sidebar-toggle" title="Collapse sidebar">
+        <i class="fas fa-angles-left"></i>
+      </button>
+    </div>
+
+    <div class="sidebar-content">
+
+      <!-- Upload Section -->
+      <div class="panel" data-panel="upload">
+        <button class="panel-header" aria-expanded="true">
+          <span><i class="fas fa-file-upload"></i> Import Route</span>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </button>
+        <div class="panel-body open">
+          <div id="dropZone" class="drop-zone">
+            <i class="fas fa-cloud-arrow-up"></i>
+            <p>Drag & drop <strong>GPX</strong> or <strong>KML</strong></p>
+            <span class="drop-zone-hint">or click to browse</span>
+            <input type="file" id="file" accept=".gpx,.kml" />
+          </div>
+          <div id="fileInfo" class="file-info hidden">
+            <i class="fas fa-file-lines"></i>
+            <span id="fileName"></span>
+            <button id="clearFile" class="icon-btn" title="Remove file"><i class="fas fa-xmark"></i></button>
+          </div>
+        </div>
       </div>
-      <hr>
-      <div class="group">
-        <h3>Conditions & Behavior</h3>
-        <label for="roadConditions">Road conditions:</label>
-        <select id="roadConditions">
-          <option value="dry">Dry</option>
-          <option value="wet">Wet</option>
-          <option value="icy">Icy</option>
-          <option value="gravel">Gravel</option>
-        </select>
-        <label for="weatherConditions">Weather conditions:</label>
-        <select id="weatherConditions">
-          <option value="clear">Clear</option>
-          <option value="rain">Rain</option>
-          <option value="snow">Snow</option>
-          <option value="fog">Fog</option>
-        </select>
-        <label for="driverBehavior">Driver behavior:</label>
-        <select id="driverBehavior">
-          <option value="aggressive">Aggressive</option>
-          <option value="normal">Normal</option>
-          <option value="conservative">Conservative</option>
-        </select>
+
+      <!-- Route Settings -->
+      <div class="panel" data-panel="route">
+        <button class="panel-header" aria-expanded="true">
+          <span><i class="fas fa-route"></i> Route Settings</span>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </button>
+        <div class="panel-body open">
+          <div class="form-group">
+            <label for="vehicleType">Vehicle Type</label>
+            <div class="select-wrapper">
+              <select id="vehicleType">
+                <option value="car">🚗 Car</option>
+                <option value="bicycle">🚲 Bicycle</option>
+                <option value="motorcycle">🏍️ Motorcycle</option>
+                <option value="truck">🚚 Truck</option>
+                <option value="electricVehicle">⚡ Electric Vehicle</option>
+                <option value="walking">🚶 Walking</option>
+                <option value="electricScooter">🛴 Electric Scooter</option>
+                <option value="bus">🚌 Bus</option>
+                <option value="van">🚐 Van</option>
+                <option value="heavyTruck">🚛 Heavy Truck</option>
+                <option value="moped">🛵 Moped</option>
+                <option value="skateboard">🛹 Skateboard</option>
+                <option value="wheelchair">♿ Wheelchair</option>
+                <option value="segway">🛞 Segway</option>
+                <option value="tram">🚋 Tram</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="totalRouteTime">Route Time <span class="unit">(min)</span></label>
+              <input type="number" id="totalRouteTime" min="1" step="1" value="60" />
+            </div>
+            <div class="form-group">
+              <label for="frequency">Frequency <span class="unit">(pts/s)</span></label>
+              <input type="number" id="frequency" min="0.1" step="0.1" value="1" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="speedOrTime">Mode</label>
+              <div class="select-wrapper">
+                <select id="speedOrTime">
+                  <option value="topSpeed">Top Speed</option>
+                  <option value="routeTime">Route Time</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="startTime">Start Time</label>
+              <input type="datetime-local" id="startTime" />
+            </div>
+          </div>
+        </div>
       </div>
-      <hr>
-      <div class="group">
-        <h3>Animation Settings</h3>
-        <label for="animationPlaybackRate">Animation Playback Rate:</label>
-        <input type="range" id="animationPlaybackRate" min="0.1" max="5" step="0.1" value="1" />
+
+      <!-- Conditions -->
+      <div class="panel" data-panel="conditions">
+        <button class="panel-header" aria-expanded="true">
+          <span><i class="fas fa-cloud-sun"></i> Conditions</span>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </button>
+        <div class="panel-body open">
+          <div class="form-group">
+            <label for="roadConditions">Road Surface</label>
+            <div class="chip-group" data-for="roadConditions">
+              <button class="chip active" data-value="dry"><i class="fas fa-road"></i> Dry</button>
+              <button class="chip" data-value="wet"><i class="fas fa-droplet"></i> Wet</button>
+              <button class="chip" data-value="icy"><i class="fas fa-snowflake"></i> Icy</button>
+              <button class="chip" data-value="gravel"><i class="fas fa-mountain"></i> Gravel</button>
+            </div>
+            <select id="roadConditions" class="hidden-select">
+              <option value="dry" selected>Dry</option>
+              <option value="wet">Wet</option>
+              <option value="icy">Icy</option>
+              <option value="gravel">Gravel</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="weatherConditions">Weather</label>
+            <div class="chip-group" data-for="weatherConditions">
+              <button class="chip active" data-value="clear"><i class="fas fa-sun"></i> Clear</button>
+              <button class="chip" data-value="rain"><i class="fas fa-cloud-rain"></i> Rain</button>
+              <button class="chip" data-value="snow"><i class="fas fa-snowflake"></i> Snow</button>
+              <button class="chip" data-value="fog"><i class="fas fa-smog"></i> Fog</button>
+            </div>
+            <select id="weatherConditions" class="hidden-select">
+              <option value="clear" selected>Clear</option>
+              <option value="rain">Rain</option>
+              <option value="snow">Snow</option>
+              <option value="fog">Fog</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="driverBehavior">Driver Behavior</label>
+            <div class="chip-group" data-for="driverBehavior">
+              <button class="chip" data-value="aggressive"><i class="fas fa-bolt"></i> Aggressive</button>
+              <button class="chip active" data-value="normal"><i class="fas fa-gauge"></i> Normal</button>
+              <button class="chip" data-value="conservative"><i class="fas fa-shield-halved"></i> Conservative</button>
+            </div>
+            <select id="driverBehavior" class="hidden-select">
+              <option value="aggressive">Aggressive</option>
+              <option value="normal" selected>Normal</option>
+              <option value="conservative">Conservative</option>
+            </select>
+          </div>
+        </div>
       </div>
-      <hr>
-      <button id="generateNMEA" class="generate-button">Generate NMEA Data</button>
-      <button id="clearRouteButton" class="generate-button">Clear Route</button>
-      <button id="downloadNMEA" class="generate-button" disabled>Download NMEA Data</button>
-      <button id="downloadCSV" class="generate-button" disabled>Download CSV Data ECEF</button>
-      <button id="downloadCSVAlt" class="generate-button" disabled>Download CSV Data with Altitude ECEF</button>
+
+      <!-- Playback -->
+      <div class="panel" data-panel="playback">
+        <button class="panel-header" aria-expanded="true">
+          <span><i class="fas fa-clapperboard"></i> Playback</span>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </button>
+        <div class="panel-body open">
+          <div class="form-group">
+            <label for="animationPlaybackRate">
+              Speed: <span id="playbackRateValue" class="accent">1.0×</span>
+            </label>
+            <input type="range" id="animationPlaybackRate" min="0.1" max="5" step="0.1" value="1" />
+            <div class="range-labels"><span>0.1×</span><span>5.0×</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="sidebar-actions">
+        <button id="generateNMEA" class="btn btn-primary btn-lg">
+          <i class="fas fa-bolt"></i> Generate NMEA
+        </button>
+        <button id="clearRouteButton" class="btn btn-outline">
+          <i class="fas fa-eraser"></i> Clear Route
+        </button>
+        <div class="btn-row">
+          <button id="downloadNMEA" class="btn btn-secondary" disabled>
+            <i class="fas fa-download"></i> NMEA
+          </button>
+          <button id="downloadCSV" class="btn btn-secondary" disabled>
+            <i class="fas fa-file-csv"></i> CSV
+          </button>
+          <button id="downloadCSVAlt" class="btn btn-secondary" disabled>
+            <i class="fas fa-file-csv"></i> CSV+Alt
+          </button>
+        </div>
+      </div>
+
       <div id="output"></div>
     </div>
-  </div>
+  </aside>
+
+  <!-- Map -->
   <div id="map" class="map"></div>
+
+  <!-- HUD Overlay -->
   <div id="hud">
-    <span id="speedDisplay" class="hud-item"></span>
-    <span id="bearingDisplay" class="hud-item"></span>
-    <span id="timeDisplay" class="hud-item"></span>
+    <div class="hud-row">
+      <div class="hud-card">
+        <span class="hud-label"><i class="fas fa-gauge-high"></i> Speed</span>
+        <span id="speedDisplay" class="hud-value">—</span>
+      </div>
+      <div class="hud-card">
+        <span class="hud-label"><i class="fas fa-compass"></i> Bearing</span>
+        <span id="bearingDisplay" class="hud-value">—</span>
+      </div>
+      <div class="hud-card">
+        <span class="hud-label"><i class="fas fa-clock"></i> Time</span>
+        <span id="timeDisplay" class="hud-value">—</span>
+      </div>
+    </div>
+    <div class="hud-sub-row">
+      <span id="totalDistanceDisplay" class="hud-sub-item">—</span>
+      <span class="hud-sub-divider">|</span>
+      <span id="estimatedTimeDisplay" class="hud-sub-item">—</span>
+    </div>
   </div>
-<div id="sub-hud">
-  <span id="totalDistanceDisplay" class="hud-item"></span>
-  <span id="estimatedTimeDisplay" class="hud-item"></span>
-</div>
-    <div id="control-buttons">
-    <button id="play" class="control-button" title="Play"><i class="fas fa-play"></i></button>
-    <button id="pause" class="control-button" title="Pause"><i class="fas fa-pause"></i></button>
+
+  <!-- Transport Controls -->
+  <div id="control-buttons">
     <button id="stop" class="control-button" title="Stop"><i class="fas fa-stop"></i></button>
+    <button id="play" class="control-button control-play" title="Play"><i class="fas fa-play"></i></button>
+    <button id="pause" class="control-button" title="Pause"><i class="fas fa-pause"></i></button>
   </div>
+
   <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
   <script src="js/geo_utils.js"></script>
   <script src="js/conversion.js"></script>

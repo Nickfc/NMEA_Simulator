@@ -10,7 +10,7 @@ class Visualization {
     this.originalRouteLayer = L.layerGroup().addTo(this.map);
     this.originalMarkerLayer = L.layerGroup().addTo(this.map);
 
-    this.routePolyline = L.polyline(this.routePoints, { color: "blue" }).addTo(this.routeLayer);
+    this.routePolyline = L.polyline(this.routePoints, { color: "#4f8cff", weight: 3, opacity: 0.8 }).addTo(this.routeLayer);
 
     this.updateSecondaryHUD();
   }
@@ -19,8 +19,8 @@ class Visualization {
     const totalDistance = this.calculateTotalDistance();
     const estimatedTime = this.calculateEstimatedTime(totalDistance);
 
-    document.getElementById("totalDistanceDisplay").textContent = `Total Distance: ${totalDistance.toFixed(2)} km`;
-    document.getElementById("estimatedTimeDisplay").textContent = `Estimated Time: ${estimatedTime.toFixed(2)} hours`;
+    document.getElementById("totalDistanceDisplay").textContent = `${totalDistance.toFixed(2)} km`;
+    document.getElementById("estimatedTimeDisplay").textContent = `${estimatedTime.toFixed(1)} hrs`;
   }
 
   calculateTotalDistance() {

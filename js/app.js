@@ -12,13 +12,15 @@ const startTimeInput = document.getElementById("startTime");
 const playButton = document.getElementById("play");
 const pauseButton = document.getElementById("pause");
 const stopButton = document.getElementById("stop");
-const interpolationInput = document.getElementById("interpolation");
-
-const routeToggle = document.getElementById("routeToggle");
-const markersToggle = document.getElementById("markersToggle");
-const originalMarkersToggle = document.getElementById("originalMarkersToggle");
-
 const animationPlaybackRateInput = document.getElementById("animationPlaybackRate");
+const playbackRateValue = document.getElementById("playbackRateValue");
+const sidebar = document.getElementById("sidebar");
+const sidebarToggle = document.getElementById("sidebarToggle");
+const dropZone = document.getElementById("dropZone");
+const fileInfo = document.getElementById("fileInfo");
+const fileName = document.getElementById("fileName");
+const clearFileBtn = document.getElementById("clearFile");
+const progressBarEl = document.getElementById("progressBar");
 
 const pastSpeeds = [];
 const numPastPoints = 5;
@@ -30,8 +32,73 @@ downloadNMEAButton.addEventListener("click", handleDownloadNMEA, false);
 playButton.addEventListener("click", handlePlay, false);
 pauseButton.addEventListener("click", handlePause, false);
 stopButton.addEventListener("click", handleStop, false);
-
 animationPlaybackRateInput.addEventListener("input", handleAnimationPlaybackRateChange, false);
+
+// ── Sidebar toggle ──
+sidebarToggle.addEventListener("click", () => {
+  const collapsed = sidebar.classList.toggle("collapsed");
+  document.body.classList.toggle("sidebar-collapsed", collapsed);
+  if (collapsed) {
+    sidebarToggle.classList.add("floating");
+    sidebarToggle.innerHTML = '<i class="fas fa-angles-right"></i>';
+  } else {
+    sidebarToggle.classList.remove("floating");
+    sidebarToggle.innerHTML = '<i class="fas fa-angles-left"></i>';
+  }
+  // Let Leaflet recalculate map size after transition
+  setTimeout(() => mapIntegration.map.invalidateSize(), 300);
+});
+
+// ── Collapsible panels ──
+document.querySelectorAll(".panel-header").forEach((header) => {
+  header.addEventListener("click", () => {
+    const expanded = header.getAttribute("aria-expanded") === "true";
+    header.setAttribute("aria-expanded", String(!expanded));
+    header.nextElementSibling.classList.toggle("open", !expanded);
+  });
+});
+
+// ── Chip selectors ──
+document.querySelectorAll(".chip-group").forEach((group) => {
+  const selectId = group.dataset.for;
+  const hiddenSelect = document.getElementById(selectId);
+  group.querySelectorAll(".chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      group.querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));
+      chip.classList.add("active");
+      if (hiddenSelect) hiddenSelect.value = chip.dataset.value;
+    });
+  });
+});
+
+// ── Drag & drop ──
+["dragenter", "dragover"].forEach((evt) => {
+  dropZone.addEventListener(evt, (e) => { e.preventDefault(); dropZone.classList.add("drag-over"); });
+});
+["dragleave", "drop"].forEach((evt) => {
+  dropZone.addEventListener(evt, () => dropZone.classList.remove("drag-over"));
+});
+dropZone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer.files[0];
+  if (file) {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    fileInput.files = dt.files;
+    fileInput.dispatchEvent(new Event("change"));
+  }
+});
+
+clearFileBtn.addEventListener("click", () => {
+  fileInput.value = "";
+  fileInfo.classList.add("hidden");
+  dropZone.classList.remove("hidden");
+});
+
+// ── Playback rate label ──
+animationPlaybackRateInput.addEventListener("input", () => {
+  playbackRateValue.textContent = parseFloat(animationPlaybackRateInput.value).toFixed(1) + "×";
+});
 
 const conversion = new Conversion();
 const customization = new Customization();
@@ -56,6 +123,10 @@ async function handleFileInputChange(event) {
     const routePoints = await conversion.readFile(file);
     mapIntegration.clearRoute();
     routePoints.forEach((point) => mapIntegration.addRoutePoint([point.lat, point.lon]));
+    // Show file chip
+    fileName.textContent = file.name;
+    fileInfo.classList.remove("hidden");
+    dropZone.classList.add("hidden");
   } catch (error) {
     alert("Error: " + error.message);
   }
@@ -65,6 +136,13 @@ function handleClearRoute() {
   mapIntegration.clearRoute();
   cachedProcessedRoutePoints = null;
   cachedNMEAData = null;
+  fileInput.value = "";
+  fileInfo.classList.add("hidden");
+  dropZone.classList.remove("hidden");
+  progressBarEl.style.width = "0%";
+  downloadNMEAButton.disabled = true;
+  downloadCSVButton.disabled = true;
+  downloadCSVAltButton.disabled = true;
 }
 
 async function handleGenerateNMEA() {
@@ -87,17 +165,18 @@ async function handleGenerateNMEA() {
 
   visualization = new Visualization(mapIntegration.map, processedRoutePoints, customization, vehicleTypeSelect.value);
 
-  progressBar.max = processedRoutePoints.length;
-  progressBar.value = 0;
+  const totalPoints = processedRoutePoints.length;
+  progressBarEl.style.width = "0%";
 
   const nmeaData = [];
   let currentTime = 0;
-  for (const point of processedRoutePoints) {
+  for (let pi = 0; pi < totalPoints; pi++) {
+    const point = processedRoutePoints[pi];
     const nmeaSentence = generateNMEASentence(point, currentTime);
     nmeaData.push(nmeaSentence);
-    progressBar.value += 1;
-    currentTime += totalRouteTime * 1000 / processedRoutePoints.length;
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    progressBarEl.style.width = ((pi + 1) / totalPoints * 100).toFixed(1) + "%";
+    currentTime += totalRouteTime * 1000 / totalPoints;
+    if (pi % 200 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
   cachedNMEAData = nmeaData;
@@ -254,11 +333,11 @@ function handlePlay() {
           visualization.map.panTo([point.lat, point.lon]);
         }
 
-        speedDisplay.textContent = `Speed: ${point.speed.toFixed(2)} km/h`;
-        bearingDisplay.textContent = `Bearing: ${GeoUtils.calculateBearing(point, nextPoint).toFixed(2)}°`;
+        speedDisplay.textContent = `${point.speed.toFixed(1)} km/h`;
+        bearingDisplay.textContent = `${GeoUtils.calculateBearing(point, nextPoint).toFixed(1)}°`;
 
         const elapsedTime = animationIndex * updateRate / parseFloat(frequencyInput.value);
-        timeDisplay.textContent = `Time: ${new Date(startTime.getTime() + elapsedTime).toLocaleTimeString()}`;
+        timeDisplay.textContent = new Date(startTime.getTime() + elapsedTime).toLocaleTimeString();
 
         animationIndex++;
       }
@@ -304,28 +383,6 @@ function handleStop() {
       animationMarker = null;
     }
     visualization.markerLayer.clearLayers();
-  }
-}
-
-function handleRouteToggle() {
-  if (visualization) {
-    visualization.toggleRoutePolyline(routeToggle.checked);
-  }
-}
-
-function handleMarkersToggle() {
-  if (visualization) {
-    visualization.markerLayer.eachLayer((layer) => {
-      layer.setOpacity(markersToggle.checked ? 1 : 0);
-    });
-  }
-}
-
-function handleOriginalMarkersToggle() {
-  if (originalMarkersLayer) {
-    originalMarkersLayer.eachLayer((layer) => {
-      layer.setOpacity(originalMarkersToggle.checked ? 1 : 0);
-    });
   }
 }
 
