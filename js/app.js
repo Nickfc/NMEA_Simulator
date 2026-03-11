@@ -551,7 +551,7 @@ function handlePlay() {
         }
 
         speedDisplay.textContent = `${point.speed.toFixed(1)} km/h`;
-        bearingDisplay.textContent = `${GeoUtils.calculateBearing(point, nextPoint).toFixed(1)}°`;
+        bearingDisplay.textContent = `${(point.bearing || GeoUtils.calculateBearing(point, nextPoint)).toFixed(1)}°`;
         const elapsedTime = animationIndex * updateRate / parseFloat(frequencyInput.value);
         timeDisplay.textContent = new Date(startTime.getTime() + elapsedTime).toLocaleTimeString();
         animationIndex++;
