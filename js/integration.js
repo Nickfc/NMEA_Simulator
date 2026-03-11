@@ -24,6 +24,9 @@ class Integration {
     /** Layer for the routed polyline */
     this.routeLayer = L.layerGroup().addTo(this.map);
 
+    /** Layer for traffic stop markers on route */
+    this.trafficLayer = L.layerGroup().addTo(this.map);
+
     /** The polyline drawn after routing */
     this.routePolyline = null;
 
@@ -127,11 +130,39 @@ class Integration {
     this.map.fitBounds(this.routePolyline.getBounds(), { padding: [50, 50] });
   }
 
+  /**
+   * Draw traffic light & stop sign markers along the route.
+   * @param {Array} coordinates - [{lat, lon}, ...]
+   * @param {Object} snappedEnv - from RoutePlanner.snapEnvironmentToRoute
+   */
+  drawTrafficMarkers(coordinates, snappedEnv) {
+    this.trafficLayer.clearLayers();
+    if (!coordinates || !snappedEnv) return;
+
+    for (let i = 0; i < coordinates.length; i++) {
+      const c = coordinates[i];
+      if (snappedEnv.trafficSignals[i]) {
+        L.circleMarker([c.lat, c.lon], {
+          radius: 5, fillColor: '#f44336', color: '#b71c1c',
+          weight: 1.5, fillOpacity: 0.85,
+        }).bindTooltip('Traffic Light', { direction: 'top', className: 'traffic-tooltip' })
+         .addTo(this.trafficLayer);
+      } else if (snappedEnv.stopSigns[i]) {
+        L.circleMarker([c.lat, c.lon], {
+          radius: 4.5, fillColor: '#ff9800', color: '#e65100',
+          weight: 1.5, fillOpacity: 0.85,
+        }).bindTooltip('Stop Sign', { direction: 'top', className: 'traffic-tooltip' })
+         .addTo(this.trafficLayer);
+      }
+    }
+  }
+
   /** Clear everything. */
   clearRoute() {
     this.waypoints = [];
     this.waypointLayer.clearLayers();
     this.routeLayer.clearLayers();
+    this.trafficLayer.clearLayers();
     this.routePolyline = null;
     this._notifyChange();
   }

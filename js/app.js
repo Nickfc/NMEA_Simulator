@@ -54,6 +54,7 @@ const speedDisplay             = document.getElementById("speedDisplay");
 const bearingDisplay           = document.getElementById("bearingDisplay");
 const timeDisplay              = document.getElementById("timeDisplay");
 const speedLimitDisplay        = document.getElementById("speedLimitDisplay");
+const roadNameDisplay          = document.getElementById("roadNameDisplay");
 const roadTypeDisplay          = document.getElementById("roadTypeDisplay");
 const roadTypeSelect           = document.getElementById("roadType");
 const trafficDensitySelect     = document.getElementById("trafficDensity");
@@ -302,6 +303,7 @@ async function handleRouteWaypoints() {
     }
 
     mapIntegration.drawRoute(routedCoordinates);
+    mapIntegration.drawTrafficMarkers(routedCoordinates, snappedEnvironment);
     conversion.routePoints = routedCoordinates.map((c) => ({ lat: c.lat, lon: c.lon, ele: c.ele || 0 }));
 
     const src = routeEnvironmentData ? routeEnvironmentData.source : "basic";
@@ -346,6 +348,7 @@ async function handleGenerateLoop() {
     }
 
     mapIntegration.drawRoute(routedCoordinates);
+    mapIntegration.drawTrafficMarkers(routedCoordinates, snappedEnvironment);
     conversion.routePoints = routedCoordinates.map((c) => ({ lat: c.lat, lon: c.lon, ele: c.ele || 0 }));
     loopActive = true;
     regenerateLoopBtn.disabled = false;
@@ -392,6 +395,7 @@ async function handleGenerateWander() {
     }
 
     mapIntegration.drawRoute(routedCoordinates);
+    mapIntegration.drawTrafficMarkers(routedCoordinates, snappedEnvironment);
     conversion.routePoints = routedCoordinates.map((c) => ({ lat: c.lat, lon: c.lon, ele: c.ele || 0 }));
     loopActive = false;
     regenerateLoopBtn.disabled = true;
@@ -465,6 +469,7 @@ function handleClearAll() {
   bearingDisplay.textContent = "—";
   timeDisplay.textContent = "—";
   if (speedLimitDisplay) speedLimitDisplay.textContent = "—";
+  if (roadNameDisplay) roadNameDisplay.textContent = "—";
   if (roadTypeDisplay) roadTypeDisplay.textContent = "—";
   document.getElementById("totalDistanceDisplay").textContent = "—";
   document.getElementById("estimatedTimeDisplay").textContent = "—";
@@ -664,6 +669,7 @@ function handlePlay() {
         const elapsedTime = animationIndex * updateRate / parseFloat(frequencyInput.value);
         timeDisplay.textContent = new Date(startTime.getTime() + elapsedTime).toLocaleTimeString();
         if (speedLimitDisplay) speedLimitDisplay.textContent = point.speedLimit ? `${Math.round(point.speedLimit)} km/h` : '—';
+        if (roadNameDisplay) roadNameDisplay.textContent = point.roadName || '—';
         if (roadTypeDisplay) {
           const rt = point.roadType;
           const src = point.roadSource;

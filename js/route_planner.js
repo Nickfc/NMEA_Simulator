@@ -283,6 +283,7 @@ class RoutePlanner {
     const result = {
       speedLimits:    new Array(n).fill(null),   // km/h or null
       roadTypes:      new Array(n).fill(null),   // OSM highway tag or null
+      roadNames:      new Array(n).fill(null),   // street name or null
       trafficSignals: new Uint8Array(n),         // 1 = traffic light nearby
       stopSigns:      new Uint8Array(n),         // 1 = stop sign nearby
       osrmSpeeds:     new Float64Array(n),       // OSRM annotation speed m/s
@@ -337,12 +338,38 @@ class RoutePlanner {
         });
       }
 
-      // Road types → same approach
+      // Road types + road names → same approach
       if (ov.roadTypes && ov.roadTypes.length > 0) {
         RoutePlanner._snapWaysToRoute(coordinates, ov.roadTypes, (i, way) => {
           result.roadTypes[i] = way.highway;
+          if (way.name) result.roadNames[i] = way.name;
         });
       }
+    }
+
+    // ── 4. Fill road name gaps from OSRM maneuver step names ──
+    if (environmentData.maneuvers) {
+      // Sort maneuvers by their snapped index
+      const indexed = environmentData.maneuvers
+        .map(m => ({ ...m, idx: RoutePlanner._nearestPointIndex(coordinates, m.lat, m.lon, 60) }))
+        .filter(m => m.idx >= 0 && m.name)
+        .sort((a, b) => a.idx - b.idx);
+
+      // For each maneuver, fill forward until the next maneuver
+      for (let mi = 0; mi < indexed.length; mi++) {
+        const from = indexed[mi].idx;
+        const to   = mi + 1 < indexed.length ? indexed[mi + 1].idx : n;
+        for (let i = from; i < to; i++) {
+          if (!result.roadNames[i]) result.roadNames[i] = indexed[mi].name;
+        }
+      }
+    }
+
+    // Forward-fill any remaining nulls in roadNames
+    let lastRoadName = null;
+    for (let i = 0; i < n; i++) {
+      if (result.roadNames[i]) lastRoadName = result.roadNames[i];
+      else if (lastRoadName) result.roadNames[i] = lastRoadName;
     }
 
     return result;

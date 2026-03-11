@@ -917,6 +917,7 @@ class PhysicsEngine {
       this.pts[i].dataSource = this.dataSource || "geometry";
       this.pts[i].roadSource = this._roadSource  ? this._roadSource[i]         : "geometry";
       this.pts[i].limitSource= this._limitSource ? this._limitSource[i]        : "type-default";
+      this.pts[i].roadName   = (this.realData && this.realData.roadNames) ? this.realData.roadNames[i] || "" : "";
     }
   }
 

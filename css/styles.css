@@ -517,6 +517,24 @@ body.sidebar-collapsed .map { left: 0; }
   font-weight: 400;
 }
 
+/* Road card (wider, two-line layout) */
+.hud-road-card { min-width: 160px; max-width: 240px; }
+.hud-road-name {
+  font-size: .95rem;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 210px;
+}
+.hud-road-type {
+  font-size: .7rem;
+  font-weight: 400;
+  color: var(--text-dim);
+  margin-top: 1px;
+}
+
 .hud-sub-row {
   display: flex;
   justify-content: center;
@@ -527,6 +545,22 @@ body.sidebar-collapsed .map { left: 0; }
 }
 .hud-sub-item { font-family: 'JetBrains Mono', monospace; }
 .hud-sub-divider { opacity: .3; }
+
+/* Traffic marker tooltips */
+.traffic-tooltip {
+  background: rgba(15 17 23 / .88) !important;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255 255 255 / .12) !important;
+  border-radius: 6px !important;
+  color: #e2e8f0 !important;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: .72rem;
+  padding: 4px 10px !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,.4);
+}
+.traffic-tooltip::before {
+  border-top-color: rgba(15 17 23 / .88) !important;
+}
 
 /* ---------- Transport Controls ---------- */
 #control-buttons {
