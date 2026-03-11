@@ -498,6 +498,25 @@ body.sidebar-collapsed .map { left: 0; }
   white-space: nowrap;
 }
 
+/* Speed / Limit combined card */
+.hud-speed-card { min-width: 170px; }
+.hud-speed-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.hud-speed-divider {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .85rem;
+  color: var(--text-dim);
+  opacity: .5;
+}
+.hud-limit {
+  font-size: .85rem;
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
 .hud-sub-row {
   display: flex;
   justify-content: center;

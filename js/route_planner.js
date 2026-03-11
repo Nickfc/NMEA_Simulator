@@ -443,6 +443,101 @@ class RoutePlanner {
     };
   }
 
+  /* ─── Wandering mode ─── */
+
+  /**
+   * Generate a wandering route that meanders within a given area for
+   * approximately `targetMinutes` of driving time.
+   *
+   * Strategy: generate successive "wander legs" — random waypoints inside
+   * the bounding circle routed via OSRM — until the cumulative OSRM
+   * duration meets the target.  Each leg adds 1–3 random waypoints so the
+   * path is organic and non-repetitive.
+   *
+   * @param {Object}  center           - {lat, lon} centre of the wander area
+   * @param {number}  targetMinutes    - desired wander duration in minutes
+   * @param {Object}  [opts]
+   * @param {number}  [opts.radiusKm=2]   - radius of the wander area (km)
+   * @param {string}  [opts.profile='driving']
+   * @param {number}  [opts.seed=1]
+   * @returns {{ coordinates, distanceKm, durationSec, environmentData }}
+   */
+  async wander(center, targetMinutes, opts = {}) {
+    const radiusKm = opts.radiusKm  || 2;
+    const profile  = opts.profile   || "driving";
+    const seed     = opts.seed      || 1;
+    const rng      = this._seededRng(seed);
+
+    const targetSec = targetMinutes * 60;
+    const radiusDeg = radiusKm / 111;
+    const cosLat    = Math.cos(center.lat * Math.PI / 180);
+
+    // Helper: random point inside the circle
+    const randPoint = () => {
+      // Uniform distribution inside a circle (sqrt trick)
+      const r     = Math.sqrt(rng()) * radiusDeg;
+      const theta = rng() * 2 * Math.PI;
+      return {
+        lat: center.lat + r * Math.sin(theta),
+        lon: center.lon + r * Math.cos(theta) / cosLat,
+      };
+    };
+
+    // Collect all coordinates and track cumulative time
+    let allCoords  = [];
+    let totalDist  = 0;   // metres
+    let totalDur   = 0;   // seconds
+    let lastPoint  = { lat: center.lat, lon: center.lon };
+    let allEnvData = null; // will merge environment data from the final big route
+
+    const MAX_LEGS = 40;  // safety cap
+
+    for (let leg = 0; leg < MAX_LEGS && totalDur < targetSec; leg++) {
+      // 1–3 intermediate waypoints per leg
+      const numIntermediate = 1 + Math.floor(rng() * 3);
+      const legWaypoints = [lastPoint];
+      for (let w = 0; w < numIntermediate; w++) {
+        legWaypoints.push(randPoint());
+      }
+
+      try {
+        const result = await this.route(legWaypoints, profile);
+        // Append coordinates (skip first point to avoid duplicates after leg 0)
+        const newCoords = leg === 0 ? result.coordinates : result.coordinates.slice(1);
+        allCoords = allCoords.concat(newCoords);
+        totalDist += result.distanceKm * 1000;
+        totalDur  += result.durationSec;
+        lastPoint = result.coordinates[result.coordinates.length - 1];
+      } catch (e) {
+        // If a leg fails (e.g. unreachable point), skip and try a new one
+        continue;
+      }
+    }
+
+    if (allCoords.length < 2) {
+      throw new Error("Could not generate a wander route — try a larger area");
+    }
+
+    // Run Overpass enrichment on the full combined route
+    let environmentData = { osrmSpeeds: [], maneuvers: [], overpass: null, source: "osrm" };
+    try {
+      const overpass = await this.queryOverpass(allCoords);
+      if (overpass) {
+        environmentData.overpass = overpass;
+        environmentData.source = "osrm+overpass";
+      }
+    } catch (e) {
+      console.warn("Overpass query for wander route failed:", e.message);
+    }
+
+    return {
+      coordinates: allCoords,
+      distanceKm: totalDist / 1000,
+      durationSec: totalDur,
+      environmentData,
+    };
+  }
+
   /**
    * Generate a closed-loop route of approximately `targetKm` kilometres
    * starting and ending at `start` {lat,lon}.

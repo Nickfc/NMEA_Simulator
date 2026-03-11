@@ -149,6 +149,58 @@
         </div>
       </div>
 
+      <!-- Wandering mode -->
+      <div class="panel" data-panel="wander">
+        <button class="panel-header" aria-expanded="false">
+          <span><i class="fas fa-person-walking-arrow-loop-left"></i> Wandering</span>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </button>
+        <div class="panel-body">
+          <p class="hint">Generate a route that meanders within an area for a target duration. Great for simulating city driving, deliveries, or patrols.</p>
+
+          <!-- Duration -->
+          <div class="form-group">
+            <label for="wanderDuration">Wander time <span class="unit">(min)</span></label>
+            <input type="number" id="wanderDuration" min="1" step="1" value="30" />
+          </div>
+
+          <!-- Radius -->
+          <div class="form-group">
+            <label for="wanderRadius">Area radius <span class="unit">(km)</span></label>
+            <input type="number" id="wanderRadius" min="0.5" step="0.5" value="2" />
+          </div>
+
+          <!-- Routing profile -->
+          <div class="form-group">
+            <label>Routing profile</label>
+            <div class="chip-group" data-for="wanderProfile">
+              <button class="chip active" data-value="driving"><i class="fas fa-car"></i> Drive</button>
+              <button class="chip" data-value="cycling"><i class="fas fa-bicycle"></i> Cycle</button>
+              <button class="chip" data-value="foot"><i class="fas fa-person-walking"></i> Walk</button>
+            </div>
+            <select id="wanderProfile" class="hidden-select">
+              <option value="driving" selected>Driving</option>
+              <option value="cycling">Cycling</option>
+              <option value="foot">Walking</option>
+            </select>
+          </div>
+
+          <!-- Seed -->
+          <div class="form-group">
+            <label for="wanderSeed">Variation seed</label>
+            <div class="seed-row">
+              <input type="number" id="wanderSeed" min="1" max="999" step="1" value="1" />
+              <button id="randomWanderSeed" class="btn-icon" title="Random seed"><i class="fas fa-dice"></i></button>
+            </div>
+          </div>
+
+          <!-- Button -->
+          <button id="generateWander" class="btn btn-accent">
+            <i class="fas fa-person-walking-arrow-loop-left"></i> Generate Wander
+          </button>
+        </div>
+      </div>
+
       <!-- Route action -->
       <div class="sidebar-actions">
         <button id="routeWaypoints" class="btn btn-primary btn-lg">
@@ -373,9 +425,13 @@
   <!-- HUD Overlay -->
   <div id="hud">
     <div class="hud-row">
-      <div class="hud-card">
+      <div class="hud-card hud-speed-card">
         <span class="hud-label"><i class="fas fa-gauge-high"></i> Speed</span>
-        <span id="speedDisplay" class="hud-value">—</span>
+        <div class="hud-speed-row">
+          <span id="speedDisplay" class="hud-value">—</span>
+          <span class="hud-speed-divider">/</span>
+          <span id="speedLimitDisplay" class="hud-value hud-limit">—</span>
+        </div>
       </div>
       <div class="hud-card">
         <span class="hud-label"><i class="fas fa-compass"></i> Bearing</span>
@@ -384,10 +440,6 @@
       <div class="hud-card">
         <span class="hud-label"><i class="fas fa-clock"></i> Time</span>
         <span id="timeDisplay" class="hud-value">—</span>
-      </div>
-      <div class="hud-card">
-        <span class="hud-label"><i class="fas fa-signs-post"></i> Limit</span>
-        <span id="speedLimitDisplay" class="hud-value">—</span>
       </div>
       <div class="hud-card">
         <span class="hud-label"><i class="fas fa-road"></i> Road</span>

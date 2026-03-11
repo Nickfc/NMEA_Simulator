@@ -44,6 +44,12 @@ const loopHeadingSelect        = document.getElementById("loopHeading");
 const loopProfileSelect        = document.getElementById("loopProfile");
 const loopSeedInput            = document.getElementById("loopSeed");
 const randomSeedBtn            = document.getElementById("randomSeed");
+const wanderDurationInput      = document.getElementById("wanderDuration");
+const wanderRadiusInput        = document.getElementById("wanderRadius");
+const wanderProfileSelect      = document.getElementById("wanderProfile");
+const wanderSeedInput          = document.getElementById("wanderSeed");
+const randomWanderSeedBtn      = document.getElementById("randomWanderSeed");
+const generateWanderBtn        = document.getElementById("generateWander");
 const speedDisplay             = document.getElementById("speedDisplay");
 const bearingDisplay           = document.getElementById("bearingDisplay");
 const timeDisplay              = document.getElementById("timeDisplay");
@@ -58,6 +64,12 @@ const customization = new Customization();
 const mapIntegration = new Integration();
 const routePlanner  = new RoutePlanner();
 
+// ── Default start time to NOW ──
+{
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  startTimeInput.value = now.toISOString().slice(0, 16);
+}
 let visualization       = null;
 let originalMarkersLayer = L.layerGroup().addTo(mapIntegration.map);
 let animationPlaybackRate = 1;
@@ -100,6 +112,10 @@ regenerateLoopBtn.addEventListener("click", handleGenerateLoop);
 randomSeedBtn.addEventListener("click", () => {
   loopSeedInput.value = Math.floor(Math.random() * 999) + 1;
 });
+randomWanderSeedBtn.addEventListener("click", () => {
+  wanderSeedInput.value = Math.floor(Math.random() * 999) + 1;
+});
+generateWanderBtn.addEventListener("click", handleGenerateWander);
 searchBtn.addEventListener("click", handleAddressSearch);
 addressSearchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") handleAddressSearch(); });
 
@@ -342,6 +358,55 @@ async function handleGenerateLoop() {
   }
 }
 
+/** Generate a wandering route from waypoint 1 using wander settings. */
+async function handleGenerateWander() {
+  const coords = mapIntegration.getWaypointCoords();
+  if (coords.length === 0) {
+    showRouteStatus("Add at least 1 waypoint as the wander centre", "error");
+    return;
+  }
+  const center = coords[0];
+  const targetMin = parseFloat(wanderDurationInput.value);
+  if (!targetMin || targetMin < 1) {
+    showRouteStatus("Enter a wander time ≥ 1 min", "error");
+    return;
+  }
+  const radiusKm = parseFloat(wanderRadiusInput.value) || 2;
+
+  const opts = {
+    radiusKm,
+    profile: wanderProfileSelect.value,
+    seed:    parseInt(wanderSeedInput.value, 10) || 1,
+  };
+
+  showRouteStatus('<i class="fas fa-spinner fa-spin"></i> Generating wander route…', "loading");
+  try {
+    const result = await routePlanner.wander(center, targetMin, opts);
+    routedCoordinates = result.coordinates;
+    routeEnvironmentData = result.environmentData || null;
+
+    if (routeEnvironmentData) {
+      snappedEnvironment = RoutePlanner.snapEnvironmentToRoute(routedCoordinates, routeEnvironmentData);
+    } else {
+      snappedEnvironment = null;
+    }
+
+    mapIntegration.drawRoute(routedCoordinates);
+    conversion.routePoints = routedCoordinates.map((c) => ({ lat: c.lat, lon: c.lon, ele: c.ele || 0 }));
+    loopActive = false;
+    regenerateLoopBtn.disabled = true;
+
+    const src = routeEnvironmentData ? routeEnvironmentData.source : "basic";
+    const badge = src === "osrm+overpass" ? "🛰️ OSM+OSRM" : src === "osrm" ? "🛰️ OSRM" : "📐 Geometry";
+    showRouteStatus(
+      `<i class="fas fa-check"></i> Wander: ${result.distanceKm.toFixed(1)} km — ${formatDuration(result.durationSec)}  <span class="data-badge">${badge}</span>`,
+      "success"
+    );
+  } catch (err) {
+    showRouteStatus(`<i class="fas fa-exclamation-triangle"></i> ${err.message}`, "error");
+  }
+}
+
 function showRouteStatus(html, type) {
   routeStatusEl.className = `route-status ${type}`;
   routeStatusEl.innerHTML = html;
@@ -547,7 +612,7 @@ function handlePlay() {
     const speedOrTime = document.getElementById("speedOrTime").value;
     const vehicleType = document.getElementById("vehicleType").value;
     const totalRouteTime = speedOrTime === "routeTime" ? parseFloat(totalRouteTimeInput.value) * 60 : null;
-    const startTime = new Date(startTimeInput.value);
+    const startTime = startTimeInput.value ? new Date(startTimeInput.value) : new Date();
 
     const physicsEngine = new PhysicsEngine(
       conversion.routePoints,
