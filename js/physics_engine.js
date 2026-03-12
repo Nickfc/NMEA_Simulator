@@ -63,7 +63,7 @@ class PhysicsEngine {
     // ── Vehicle parameters (with sensible defaults) ──
     const vp = vehicleProfile || {};
     this.vMax       = (vp.maxSpeed       || 120) / 3.6;     // m/s
-    this.aMax       = vp.acceleration    || 2.5;            // m/s²
+    this.aMax       = vp.acceleration    || 2.0;            // m/s² (gentle normal accel)
     this.bMax       = vp.braking         || 4.5;            // m/s² (decel)
     this.lateralG   = vp.maxLateralG     || 0.35;           // g
     this.mass       = vp.mass            || 1500;           // kg
@@ -71,7 +71,7 @@ class PhysicsEngine {
     this.frontalArea = vp.frontalArea    || 2.2;            // m²
     this.rollingCr  = vp.rollingCr       || 0.012;
     this.powerKw    = vp.powerKw         || 100;            // kW
-    this.idleSpeed  = (vp.idleSpeed      || 5) / 3.6;      // m/s
+    this.idleSpeed  = (vp.idleSpeed      || 3) / 3.6;      // m/s (slow crawl near stops)
 
     this.roadConditions    = roadConditions    || "dry";
     this.weatherConditions = weatherConditions || "clear";
@@ -349,11 +349,12 @@ class PhysicsEngine {
     this._speedLimit = new Float64Array(n);
     this._limitSource = new Array(n);
 
+    // Realistic average travel speeds (not posted maximums)
     const LIMITS = {
-      highway:     110 / 3.6,   // m/s
-      rural:        80 / 3.6,
-      urban:        50 / 3.6,
-      residential:  30 / 3.6,
+      highway:      95 / 3.6,   // m/s – avg highway cruise
+      rural:        65 / 3.6,   //       avg rural road
+      urban:        40 / 3.6,   //       avg city driving
+      residential:  25 / 3.6,   //       avg neighbourhood
     };
 
     for (let i = 0; i < n; i++) {
@@ -365,9 +366,9 @@ class PhysicsEngine {
         base = this.realData.speedLimits[i] / 3.6;
         source = "overpass";
       }
-      // Priority 2: OSRM annotation speed
+      // Priority 2: OSRM annotation speed (already a realistic reference speed)
       else if (this.realData && this.realData.osrmSpeeds && this.realData.osrmSpeeds[i] > 0) {
-        base = this.realData.osrmSpeeds[i] * 1.15;
+        base = this.realData.osrmSpeeds[i];
         source = "osrm";
       }
       // Priority 3: Road-type default
@@ -716,8 +717,9 @@ class PhysicsEngine {
 
     let driver = 1.0;
     switch (this.driverBehavior) {
-      case "aggressive":   driver = 1.12; break;
-      case "conservative": driver = 0.82; break;
+      case "aggressive":   driver = 1.05; break;
+      case "normal":       driver = 0.92; break;
+      case "conservative": driver = 0.80; break;
     }
 
     // Persist for post-condition sweeps
@@ -742,7 +744,9 @@ class PhysicsEngine {
   _postConditionSweeps() {
     const n    = this.pts.length;
     const grip = this._grip || 1.0;
-    if (grip >= 0.99) return; // dry + clear → no reduction, skip
+    const driver = this._driver || 1.0;
+    // Skip only when nothing changed (dry + clear + aggressive/default driver)
+    if (grip >= 0.99 && driver >= 1.0) return;
 
     const P        = this.powerKw * 1000;
     const muLong   = this.lateralG * 2.2 * grip;
