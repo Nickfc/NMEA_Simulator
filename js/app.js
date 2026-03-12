@@ -646,79 +646,104 @@ function handlePlay() {
       ? physicsEngine.processRoute()
       : physicsEngine.processRouteWithDynamicSpeed(1);
 
-    const updateRate = totalRouteTime ? (totalRouteTime * 1000) / processedRoutePoints.length : 1000;
+    // ── Elapsed-time-based animation ──
+    // The physics engine's `elapsed` field (seconds) already encodes
+    // realistic timing: travel time between points plus dwell at stops.
+    // The animation tracks a simulation clock and interpolates position
+    // so marker speed matches the HUD speed exactly.
+    const totalSimTime = processedRoutePoints[processedRoutePoints.length - 1].elapsed;
+    // Optional time scaling when user specified a total route time
+    const timeScale = (totalRouteTime && totalSimTime > 0)
+      ? totalRouteTime / totalSimTime : 1;
 
+    animationIndex = 0;
     if (!animationMarker) {
       animationMarker = L.marker([processedRoutePoints[0].lat, processedRoutePoints[0].lon]).addTo(visualization.markerLayer);
+    } else {
+      animationMarker.setLatLng([processedRoutePoints[0].lat, processedRoutePoints[0].lon]);
     }
 
     let lastTimestamp = null;
-    let accumulatedTime = 0;
-    let dwellRemaining = 0;  // ms of stop-dwell to burn through
+    let simulationClock = 0;   // seconds of simulation time elapsed
+    let lastStopBadge = false; // track stop badge state for toggling
 
     function animate(timestamp) {
       if (animationState !== "playing") return;
       if (lastTimestamp === null) lastTimestamp = timestamp;
-      const delta = timestamp - lastTimestamp;
+      const delta = timestamp - lastTimestamp;  // ms
       lastTimestamp = timestamp;
-      accumulatedTime += delta;
 
-      const frameInterval = updateRate / (animationPlaybackRate * parseFloat(frequencyInput.value));
+      // Advance simulation clock (real-time × playback rate / time scale)
+      simulationClock += (delta / 1000) * animationPlaybackRate / timeScale;
 
-      // If dwelling at a stop, burn time there first
-      if (dwellRemaining > 0) {
-        dwellRemaining -= delta * animationPlaybackRate;
-        if (dwellRemaining > 0) {
-          animationFrameId = requestAnimationFrame(animate);
-          return;
-        }
-        // Dwell finished — reset accumulator and continue
-        accumulatedTime = 0;
-      }
-
-      while (accumulatedTime >= frameInterval && animationIndex < processedRoutePoints.length - 1) {
-        accumulatedTime -= frameInterval;
-        const point = processedRoutePoints[animationIndex];
-        const nextPoint = processedRoutePoints[Math.min(animationIndex + 1, processedRoutePoints.length - 1)];
-
-        animationMarker.setLatLng([point.lat, point.lon]);
-        if (!visualization.map.getBounds().pad(-0.2).contains(animationMarker.getLatLng())) {
-          visualization.map.panTo([point.lat, point.lon]);
-        }
-
-        speedDisplay.textContent = `${point.speed.toFixed(1)} km/h`;
-        bearingDisplay.textContent = `${(point.bearing || GeoUtils.calculateBearing(point, nextPoint)).toFixed(1)}°`;
-        const elapsedTime = animationIndex * updateRate / parseFloat(frequencyInput.value);
-        timeDisplay.textContent = new Date(startTime.getTime() + elapsedTime).toLocaleTimeString();
-        if (speedLimitDisplay) speedLimitDisplay.textContent = point.speedLimit ? `${Math.round(point.speedLimit)} km/h` : '—';
-        if (roadNameDisplay) roadNameDisplay.textContent = point.roadName || '—';
-        if (roadTypeDisplay) {
-          const rt = point.roadType;
-          const src = point.roadSource;
-          const icon = src === "overpass" ? "🛰️" : src === "osrm" ? "📡" : "📐";
-          roadTypeDisplay.textContent = rt ? `${icon} ${rt.charAt(0).toUpperCase() + rt.slice(1)}` : '—';
-        }
-        // Stop indicator + dwell pause
-        if (stopIndicator) {
-          if (point.isStop) {
-            stopIndicator.classList.remove('hud-stop-hidden');
-            stopIndicator.classList.add('hud-stop-visible');
-            if (stopIcon) stopIcon.textContent = point.stopType === 'trafficLight' ? '🚥' : '🛑';
-            if (stopLabel) stopLabel.textContent = point.stopType === 'trafficLight' ? 'Red Light' : 'Stop Sign';
-            // Pause at this stop — scale dwell so it's visible but not tedious
-            const baseDwell = point.stopType === 'trafficLight' ? 3000 : 1500; // ms
-            dwellRemaining = baseDwell;
-            animationIndex++;
-            break; // exit the while-loop so the dwell timer takes over
-          } else {
-            stopIndicator.classList.remove('hud-stop-visible');
-            stopIndicator.classList.add('hud-stop-hidden');
-          }
-        }
+      // Advance animationIndex to the last point whose elapsed ≤ simulationClock
+      while (animationIndex < processedRoutePoints.length - 1 &&
+             processedRoutePoints[animationIndex + 1].elapsed <= simulationClock) {
         animationIndex++;
       }
 
+      const pt  = processedRoutePoints[animationIndex];
+      const ni  = Math.min(animationIndex + 1, processedRoutePoints.length - 1);
+      const npt = processedRoutePoints[ni];
+
+      // ── Smooth interpolation between current and next point ──
+      let lat = pt.lat, lon = pt.lon;
+      let speed = pt.speed, bearing = pt.bearing;
       if (animationIndex < processedRoutePoints.length - 1) {
+        const span = npt.elapsed - pt.elapsed;
+        if (span > 0.001) {
+          const frac = Math.max(0, Math.min((simulationClock - pt.elapsed) / span, 1));
+          lat  = pt.lat  + frac * (npt.lat  - pt.lat);
+          lon  = pt.lon  + frac * (npt.lon  - pt.lon);
+          speed   = pt.speed   + frac * (npt.speed   - pt.speed);
+          bearing = pt.bearing + frac * (npt.bearing - pt.bearing);
+        }
+      }
+
+      animationMarker.setLatLng([lat, lon]);
+      if (!visualization.map.getBounds().pad(-0.2).contains(animationMarker.getLatLng())) {
+        visualization.map.panTo([lat, lon]);
+      }
+
+      // ── HUD updates ──
+      speedDisplay.textContent = `${speed.toFixed(1)} km/h`;
+      bearingDisplay.textContent = `${(bearing || 0).toFixed(1)}°`;
+      timeDisplay.textContent = new Date(startTime.getTime() + simulationClock * 1000).toLocaleTimeString();
+      if (speedLimitDisplay) speedLimitDisplay.textContent = pt.speedLimit ? `${Math.round(pt.speedLimit)} km/h` : '—';
+      if (roadNameDisplay) roadNameDisplay.textContent = pt.roadName || '—';
+      if (roadTypeDisplay) {
+        const rt = pt.roadType;
+        const src = pt.roadSource;
+        const icon = src === "overpass" ? "🛰️" : src === "osrm" ? "📡" : "📐";
+        roadTypeDisplay.textContent = rt ? `${icon} ${rt.charAt(0).toUpperCase() + rt.slice(1)}` : '—';
+      }
+
+      // ── Stop indicator (dwell is handled naturally by elapsed gap) ──
+      if (stopIndicator) {
+        if (pt.isStop) {
+          if (!lastStopBadge) {
+            stopIndicator.classList.remove('hud-stop-hidden');
+            stopIndicator.classList.add('hud-stop-visible');
+            if (stopIcon) stopIcon.textContent = pt.stopType === 'trafficLight' ? '🚥' : '🛑';
+            if (stopLabel) {
+              const dwellSec = pt.stopDwell ? Math.round(pt.stopDwell) : '';
+              stopLabel.textContent = pt.stopType === 'trafficLight'
+                ? `Red Light${dwellSec ? ' ' + dwellSec + 's' : ''}`
+                : `Stop Sign${dwellSec ? ' ' + dwellSec + 's' : ''}`;
+            }
+            lastStopBadge = true;
+          }
+        } else {
+          if (lastStopBadge) {
+            stopIndicator.classList.remove('hud-stop-visible');
+            stopIndicator.classList.add('hud-stop-hidden');
+            lastStopBadge = false;
+          }
+        }
+      }
+
+      // ── Continue or finish ──
+      if (simulationClock < totalSimTime) {
         animationFrameId = requestAnimationFrame(animate);
       } else {
         animationState = "stopped";

@@ -922,6 +922,7 @@ class PhysicsEngine {
       this.pts[i].isStop     = this._isStop      ? this._isStop[i] > 0         : false;
       this.pts[i].stopType   = this._isStop && this._isStop[i] === 1 ? "trafficLight" :
                                this._isStop && this._isStop[i] === 2 ? "stopSign"     : null;
+      this.pts[i].stopDwell  = this._stopDuration ? this._stopDuration[i]      : 0;
       this.pts[i].dataSource = this.dataSource || "geometry";
       this.pts[i].roadSource = this._roadSource  ? this._roadSource[i]         : "geometry";
       this.pts[i].limitSource= this._limitSource ? this._limitSource[i]        : "type-default";
