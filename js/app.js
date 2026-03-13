@@ -14,6 +14,7 @@ const driverBehaviorSelect    = document.getElementById("driverBehavior");
 const generateNMEAButton      = document.getElementById("generateNMEA");
 const clearRouteButton         = document.getElementById("clearRouteButton");
 const downloadNMEAButton       = document.getElementById("downloadNMEA");
+const downloadGPXButton        = document.getElementById("downloadGPX");
 const downloadCSVButton        = document.getElementById("downloadCSV");
 const downloadCSVAltButton     = document.getElementById("downloadCSVAlt");
 const startTimeInput           = document.getElementById("startTime");
@@ -62,11 +63,32 @@ const stopIndicator            = document.getElementById("stopIndicator");
 const stopIcon                 = document.getElementById("stopIcon");
 const stopLabel                = document.getElementById("stopLabel");
 
+// ── Realism & Export panel refs ──
+const exportModeSelect         = document.getElementById("exportMode");
+const gpsNoiseCheckbox         = document.getElementById("gpsNoiseEnabled");
+const gpsNoiseLevelInput       = document.getElementById("gpsNoiseLevel");
+const noiseLevelValueEl        = document.getElementById("noiseLevelValue");
+const satelliteSimCheckbox     = document.getElementById("satelliteSimEnabled");
+const elevationCheckbox        = document.getElementById("elevationEnabled");
+
+// ── Scrub bar refs ──
+const scrubContainer           = document.getElementById("scrubContainer");
+const scrubBar                 = document.getElementById("scrubBar");
+const scrubTimeEl              = document.getElementById("scrubTime");
+const scrubTotalEl             = document.getElementById("scrubTotal");
+
+// ── Profile chart refs ──
+const profileContainer         = document.getElementById("profileContainer");
+const profileCanvas            = document.getElementById("profileChart");
+const profileTooltip           = document.getElementById("profileTooltip");
+
 // ── Core objects ──
 const conversion    = new Conversion();
 const customization = new Customization();
 const mapIntegration = new Integration();
 const routePlanner  = new RoutePlanner();
+const nmeaGenerator = new NMEAGenerator();
+const elevationService = new ElevationService();
 
 // ── Default start time to NOW ──
 {
@@ -83,6 +105,13 @@ let animationMarker  = null;
 let animationFrameId = null;
 let cachedProcessedRoutePoints = null;
 let cachedNMEAData = null;
+
+// ── Pause/resume state ──
+let savedSimulationClock   = 0;
+let savedProcessedPoints   = null;
+let savedTimeScale         = 1;
+let savedTotalSimTime      = 0;
+let savedStartTime         = null;
 
 // Routed coordinates (the detailed path from OSRM)
 let routedCoordinates = null;
@@ -103,6 +132,7 @@ let loopDragDebounce = null;
 generateNMEAButton.addEventListener("click", handleGenerateNMEA);
 clearRouteButton.addEventListener("click", handleClearAll);
 downloadNMEAButton.addEventListener("click", handleDownloadNMEA);
+if (downloadGPXButton) downloadGPXButton.addEventListener("click", handleDownloadGPX);
 downloadCSVButton.addEventListener("click", () => handleDownloadCSV(false));
 downloadCSVAltButton.addEventListener("click", () => handleDownloadCSV(true));
 playButton.addEventListener("click", handlePlay);
@@ -122,6 +152,23 @@ randomWanderSeedBtn.addEventListener("click", () => {
 generateWanderBtn.addEventListener("click", handleGenerateWander);
 searchBtn.addEventListener("click", handleAddressSearch);
 addressSearchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") handleAddressSearch(); });
+
+// ── Realism panel listeners ──
+if (gpsNoiseLevelInput) {
+  gpsNoiseLevelInput.addEventListener("input", () => {
+    noiseLevelValueEl.textContent = parseFloat(gpsNoiseLevelInput.value).toFixed(1);
+  });
+}
+
+// ── Scrub bar listeners ──
+if (scrubBar) {
+  let scrubbing = false;
+  scrubBar.addEventListener("input", () => {
+    scrubbing = true;
+    handleScrub(parseInt(scrubBar.value, 10));
+  });
+  scrubBar.addEventListener("change", () => { scrubbing = false; });
+}
 
 // Close search results when clicking outside
 document.addEventListener("click", (e) => {
@@ -298,6 +345,9 @@ async function handleRouteWaypoints() {
     routedCoordinates = result.coordinates;
     routeEnvironmentData = result.environmentData || null;
 
+    // Fetch real elevation data
+    await fetchRouteElevation(routedCoordinates);
+
     // Snap real-world data to route points
     if (routeEnvironmentData) {
       snappedEnvironment = RoutePlanner.snapEnvironmentToRoute(routedCoordinates, routeEnvironmentData);
@@ -343,6 +393,9 @@ async function handleGenerateLoop() {
     const result = await routePlanner.closedLoop(start, targetKm, opts);
     routedCoordinates = result.coordinates;
     routeEnvironmentData = result.environmentData || null;
+
+    // Fetch real elevation data
+    await fetchRouteElevation(routedCoordinates);
 
     if (routeEnvironmentData) {
       snappedEnvironment = RoutePlanner.snapEnvironmentToRoute(routedCoordinates, routeEnvironmentData);
@@ -390,6 +443,9 @@ async function handleGenerateWander() {
     const result = await routePlanner.wander(center, targetMin, opts);
     routedCoordinates = result.coordinates;
     routeEnvironmentData = result.environmentData || null;
+
+    // Fetch real elevation data
+    await fetchRouteElevation(routedCoordinates);
 
     if (routeEnvironmentData) {
       snappedEnvironment = RoutePlanner.snapEnvironmentToRoute(routedCoordinates, routeEnvironmentData);
@@ -458,6 +514,8 @@ function handleClearAll() {
   routeEnvironmentData = null;
   snappedEnvironment = null;
   loopActive = false;
+  savedProcessedPoints = null;
+  savedSimulationClock = 0;
   regenerateLoopBtn.disabled = true;
   conversion.routePoints = [];
   fileInput.value = "";
@@ -465,6 +523,7 @@ function handleClearAll() {
   dropZone.classList.remove("hidden");
   progressBarEl.style.width = "0%";
   downloadNMEAButton.disabled = true;
+  if (downloadGPXButton) downloadGPXButton.disabled = true;
   downloadCSVButton.disabled = true;
   downloadCSVAltButton.disabled = true;
   routeStatusEl.classList.add("hidden");
@@ -477,6 +536,9 @@ function handleClearAll() {
   if (stopIndicator) { stopIndicator.classList.remove('hud-stop-visible'); stopIndicator.classList.add('hud-stop-hidden'); }
   document.getElementById("totalDistanceDisplay").textContent = "—";
   document.getElementById("estimatedTimeDisplay").textContent = "—";
+  // Hide profile chart and scrub bar
+  if (profileContainer) profileContainer.classList.add("hidden");
+  if (scrubContainer) scrubContainer.classList.add("hidden");
 }
 
 async function handleGenerateNMEA() {
@@ -490,6 +552,18 @@ async function handleGenerateNMEA() {
   const frequency = parseFloat(frequencyInput.value);
 
   conversion.interpolateRoutePoints(totalRouteTime, frequency);
+
+  // ── Fetch elevation if enabled ──
+  if (elevationCheckbox && elevationCheckbox.checked) {
+    showRouteStatus('<i class="fas fa-mountain-sun"></i> Fetching elevation data…', "loading");
+    try {
+      await elevationService.fetchElevations(conversion.routePoints, (frac) => {
+        progressBarEl.style.width = (frac * 30).toFixed(1) + "%"; // first 30% for elevation
+      });
+    } catch (e) {
+      console.warn("Elevation fetch failed, continuing with flat:", e);
+    }
+  }
 
   const physicsEngine = new PhysicsEngine(
     conversion.routePoints,
@@ -509,24 +583,35 @@ async function handleGenerateNMEA() {
 
   visualization = new Visualization(mapIntegration.map, processedRoutePoints, customization, vehicleTypeSelect.value);
 
+  // ── Configure NMEA generator from UI ──
+  nmeaGenerator.mode         = exportModeSelect ? exportModeSelect.value : "standard";
+  nmeaGenerator.gpsNoise     = gpsNoiseCheckbox ? gpsNoiseCheckbox.checked : true;
+  nmeaGenerator.noiseMeters  = gpsNoiseLevelInput ? parseFloat(gpsNoiseLevelInput.value) : 2.5;
+  nmeaGenerator.simulateSats = satelliteSimCheckbox ? satelliteSimCheckbox.checked : true;
+
   const totalPoints = processedRoutePoints.length;
-  progressBarEl.style.width = "0%";
+  const startTime = startTimeInput.value ? new Date(startTimeInput.value) : new Date();
 
   const nmeaData = [];
-  let currentTime = 0;
   for (let pi = 0; pi < totalPoints; pi++) {
     const point = processedRoutePoints[pi];
-    const nmeaSentence = generateNMEASentence(point, currentTime);
-    nmeaData.push(nmeaSentence);
-    progressBarEl.style.width = ((pi + 1) / totalPoints * 100).toFixed(1) + "%";
-    currentTime += totalRouteTime * 1000 / totalPoints;
+    const fixTime = new Date(startTime.getTime() + (point.elapsed || 0) * 1000);
+    const sentences = nmeaGenerator.generateFix(point, fixTime);
+    nmeaData.push(sentences.join("\r\n"));
+    progressBarEl.style.width = (30 + (pi + 1) / totalPoints * 70).toFixed(1) + "%";
     if (pi % 200 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
   cachedNMEAData = nmeaData;
   downloadNMEAButton.disabled = false;
+  if (downloadGPXButton) downloadGPXButton.disabled = false;
   downloadCSVButton.disabled = false;
   downloadCSVAltButton.disabled = false;
+
+  // ── Render route profile chart ──
+  renderProfileChart(processedRoutePoints);
+
+  showRouteStatus(`<i class="fas fa-check"></i> ${totalPoints} NMEA fixes generated (${nmeaGenerator.mode} mode)`, "success");
 }
 
 // ═══════════════════════════════════════════
@@ -535,11 +620,32 @@ async function handleGenerateNMEA() {
 
 function handleDownloadNMEA() {
   if (!cachedNMEAData || cachedNMEAData.length === 0) return;
-  const blob = new Blob([cachedNMEAData.join("\n")], { type: "text/plain;charset=utf-8" });
+  const ext = nmeaGenerator.mode === "hackrf" ? "txt" : "nmea";
+  const blob = new Blob([cachedNMEAData.join("\r\n")], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "nmea_data.txt";
+  link.download = `nmea_data.${ext}`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Export a GPX track file. */
+function handleDownloadGPX() {
+  const points = cachedProcessedRoutePoints;
+  if (!points || points.length === 0) return;
+  const startTime = startTimeInput.value ? new Date(startTimeInput.value) : new Date();
+  let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="NMEA Simulator">\n<trk><name>Simulated Route</name><trkseg>\n`;
+  for (const pt of points) {
+    const t = new Date(startTime.getTime() + (pt.elapsed || 0) * 1000).toISOString();
+    gpx += `  <trkpt lat="${pt.lat.toFixed(7)}" lon="${pt.lon.toFixed(7)}"><ele>${(pt.ele || 0).toFixed(1)}</ele><time>${t}</time></trkpt>\n`;
+  }
+  gpx += `</trkseg></trk>\n</gpx>`;
+  const blob = new Blob([gpx], { type: "application/gpx+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "route.gpx";
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -566,7 +672,7 @@ function handleDownloadCSV(includeAltitude = false) {
 }
 
 // ═══════════════════════════════════════════
-//   NMEA helpers
+//   NMEA helpers (ECEF only – old NMEA gen removed)
 // ═══════════════════════════════════════════
 
 function latLonAltToECEF(lat, lon, alt) {
@@ -585,175 +691,387 @@ function latLonAltToECEF(lat, lon, alt) {
   };
 }
 
-function generateNMEASentence(point, currentTime) {
-  const time = currentTime
-    ? new Date(currentTime).toISOString().split(".")[0].replace("T", "").replace(/-/g, "").replace(/:/g, "").slice(-6)
-      + "." + String(Math.floor(currentTime % 1000 / 10)).padStart(2, "0")
-    : "000000.00";
-  const lat = convertToNMEACoordinate(point.lat, true);
-  const lon = convertToNMEACoordinate(point.lon, false);
-  const ele = (point.ele || 0).toFixed(2);
-  const nmeaString = `$GPGGA,${time},${lat},N,${lon},E,1,05,2.87,${ele},M,00.000,M,,`;
-  const checksum = calculateChecksum(nmeaString);
-  return nmeaString + "*" + checksum.toString(16).toUpperCase();
+// ═══════════════════════════════════════════
+//   ROUTE PROFILE CHART (speed vs distance)
+// ═══════════════════════════════════════════
+
+function renderProfileChart(points) {
+  if (!profileCanvas || !profileContainer || !points || points.length < 2) return;
+  profileContainer.classList.remove("hidden");
+
+  const ctx = profileCanvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const rect = profileContainer.getBoundingClientRect();
+  const W = rect.width - 24;   // account for padding
+  const H = rect.height - 16;
+  profileCanvas.width  = W * dpr;
+  profileCanvas.height = H * dpr;
+  profileCanvas.style.width  = W + "px";
+  profileCanvas.style.height = H + "px";
+  ctx.scale(dpr, dpr);
+
+  // Compute cumulative distance
+  const dist = [0];
+  for (let i = 1; i < points.length; i++) {
+    const dx = (points[i].lat - points[i - 1].lat) * 111320;
+    const dy = (points[i].lon - points[i - 1].lon) * 111320 * Math.cos(points[i].lat * Math.PI / 180);
+    dist.push(dist[i - 1] + Math.sqrt(dx * dx + dy * dy));
+  }
+  const totalDist = dist[dist.length - 1] || 1;
+  const maxSpeed = Math.max(...points.map(p => p.speed || 0), 1);
+  const maxEle = Math.max(...points.map(p => p.ele || 0), 1);
+  const minEle = Math.min(...points.map(p => p.ele || 0), 0);
+  const eleRange = (maxEle - minEle) || 1;
+
+  // Margin for labels
+  const ML = 36, MR = 8, MT = 6, MB = 18;
+  const cW = W - ML - MR;
+  const cH = H - MT - MB;
+
+  // Clear
+  ctx.clearRect(0, 0, W, H);
+
+  // Draw elevation fill (subtle)
+  ctx.beginPath();
+  ctx.moveTo(ML, MT + cH);
+  for (let i = 0; i < points.length; i++) {
+    const x = ML + (dist[i] / totalDist) * cW;
+    const y = MT + cH - ((points[i].ele || 0) - minEle) / eleRange * cH * 0.4;
+    if (i === 0) ctx.moveTo(x, MT + cH);
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(ML + cW, MT + cH);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(79,140,255,0.08)";
+  ctx.fill();
+
+  // Draw elevation line
+  ctx.beginPath();
+  for (let i = 0; i < points.length; i++) {
+    const x = ML + (dist[i] / totalDist) * cW;
+    const y = MT + cH - ((points[i].ele || 0) - minEle) / eleRange * cH * 0.4;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = "rgba(79,140,255,0.3)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Color map for road types
+  const roadColors = {
+    motorway: "#f87171", trunk: "#fb923c", primary: "#fbbf24",
+    secondary: "#a3e635", tertiary: "#34d399", residential: "#60a5fa",
+    unclassified: "#a78bfa", service: "#818cf8", default: "#4f8cff",
+  };
+
+  // Draw speed line with road-type coloring
+  ctx.lineWidth = 1.5;
+  for (let i = 1; i < points.length; i++) {
+    const x0 = ML + (dist[i - 1] / totalDist) * cW;
+    const y0 = MT + cH - (points[i - 1].speed || 0) / maxSpeed * cH;
+    const x1 = ML + (dist[i] / totalDist) * cW;
+    const y1 = MT + cH - (points[i].speed || 0) / maxSpeed * cH;
+
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    const rt = (points[i].roadType || "default").toLowerCase();
+    ctx.strokeStyle = roadColors[rt] || roadColors.default;
+    ctx.stroke();
+  }
+
+  // Mark stops as red dots
+  for (let i = 0; i < points.length; i++) {
+    if (points[i].isStop) {
+      const x = ML + (dist[i] / totalDist) * cW;
+      const y = MT + cH;
+      ctx.beginPath();
+      ctx.arc(x, y - 2, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = "#f87171";
+      ctx.fill();
+    }
+  }
+
+  // Axis labels
+  ctx.fillStyle = "#4b5563";
+  ctx.font = "10px Inter, sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText(`${Math.round(maxSpeed)}`, ML - 4, MT + 10);
+  ctx.fillText("0", ML - 4, MT + cH);
+  ctx.textAlign = "left";
+  ctx.fillText("0", ML, MT + cH + 14);
+  ctx.textAlign = "right";
+  ctx.fillText(`${(totalDist / 1000).toFixed(1)} km`, ML + cW, MT + cH + 14);
+  // Y-axis label
+  ctx.save();
+  ctx.translate(10, MT + cH / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = "center";
+  ctx.fillText("km/h", 0, 0);
+  ctx.restore();
+
+  // Grid lines
+  ctx.strokeStyle = "rgba(255,255,255,0.04)";
+  ctx.lineWidth = 0.5;
+  for (let g = 0; g <= 4; g++) {
+    const y = MT + (g / 4) * cH;
+    ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + cW, y); ctx.stroke();
+  }
+
+  // Store chart data for tooltip/scrub hover
+  profileCanvas._chartData = { points, dist, totalDist, maxSpeed, ML, MR, MT, MB, cW, cH };
+
+  // Tooltip on hover
+  profileCanvas.addEventListener("mousemove", handleProfileHover);
+  profileCanvas.addEventListener("mouseleave", () => {
+    if (profileTooltip) profileTooltip.classList.add("hidden");
+  });
 }
 
-function convertToNMEACoordinate(coordinate, isLatitude) {
-  const degrees = Math.abs(coordinate);
-  let result = degrees.toFixed(7);
-  result = result.padStart(isLatitude ? 9 : 10, "0");
-  return result;
-}
+function handleProfileHover(e) {
+  if (!profileCanvas._chartData || !profileTooltip) return;
+  const { points, dist, totalDist, maxSpeed, ML, cW, cH, MT } = profileCanvas._chartData;
+  const rect = profileCanvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left - ML;
+  if (mx < 0 || mx > cW) { profileTooltip.classList.add("hidden"); return; }
+  const frac = mx / cW;
+  const targetDist = frac * totalDist;
 
-function calculateChecksum(nmeaString) {
-  let checksum = 0;
-  for (let i = 1; i < nmeaString.length; i++) checksum ^= nmeaString.charCodeAt(i);
-  return checksum;
+  // Find closest point by distance
+  let idx = 0;
+  for (let i = 1; i < dist.length; i++) {
+    if (dist[i] >= targetDist) { idx = i; break; }
+  }
+  const pt = points[idx];
+  profileTooltip.classList.remove("hidden");
+  profileTooltip.innerHTML = `<b>${(pt.speed || 0).toFixed(1)} km/h</b><br>${(dist[idx] / 1000).toFixed(2)} km · ${(pt.ele || 0).toFixed(0)} m ele<br>${pt.roadType || '—'} ${pt.roadName ? '· ' + pt.roadName : ''}`;
+  profileTooltip.style.left = (e.clientX - profileContainer.getBoundingClientRect().left + 12) + "px";
+  profileTooltip.style.top = "4px";
 }
 
 // ═══════════════════════════════════════════
-//   ANIMATION (Play / Pause / Stop)
+//   SCRUB BAR HELPERS
+// ═══════════════════════════════════════════
+
+function formatScrubTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function showScrubBar(totalSimTime) {
+  if (!scrubContainer || !scrubBar) return;
+  scrubContainer.classList.remove("hidden");
+  scrubBar.max = 1000;
+  scrubBar.value = 0;
+  scrubTotalEl.textContent = formatScrubTime(totalSimTime);
+  scrubTimeEl.textContent = "0:00";
+}
+
+function updateScrubBar(simulationClock, totalSimTime) {
+  if (!scrubBar || scrubContainer.classList.contains("hidden")) return;
+  const frac = Math.min(simulationClock / totalSimTime, 1);
+  scrubBar.value = Math.round(frac * 1000);
+  scrubTimeEl.textContent = formatScrubTime(simulationClock);
+}
+
+function handleScrub(value) {
+  // Only works while paused or stopped with cached data
+  if (!savedProcessedPoints || savedTotalSimTime <= 0) return;
+  const frac = value / 1000;
+  const targetClock = frac * savedTotalSimTime;
+  savedSimulationClock = targetClock;
+
+  // Find the right index
+  let idx = 0;
+  for (let i = 0; i < savedProcessedPoints.length - 1; i++) {
+    if (savedProcessedPoints[i + 1].elapsed > targetClock) { idx = i; break; }
+    idx = i;
+  }
+  animationIndex = idx;
+  const pt = savedProcessedPoints[idx];
+
+  // Update marker position
+  if (animationMarker) {
+    animationMarker.setLatLng([pt.lat, pt.lon]);
+    visualization.map.panTo([pt.lat, pt.lon]);
+  }
+
+  // Update HUD
+  speedDisplay.textContent = `${(pt.speed || 0).toFixed(1)} km/h`;
+  bearingDisplay.textContent = `${(pt.bearing || 0).toFixed(1)}°`;
+  if (savedStartTime) {
+    timeDisplay.textContent = new Date(savedStartTime.getTime() + targetClock * 1000).toLocaleTimeString();
+  }
+  scrubTimeEl.textContent = formatScrubTime(targetClock);
+}
+
+// ═══════════════════════════════════════════
+//   ANIMATION (Play / Pause / Resume / Stop)
 // ═══════════════════════════════════════════
 
 function handlePlay() {
-  if (visualization && animationState !== "playing") {
+  if (!visualization) return;
+
+  // ── RESUME from pause ──
+  if (animationState === "paused" && savedProcessedPoints) {
     animationState = "playing";
-    const speedOrTime = document.getElementById("speedOrTime").value;
-    const vehicleType = document.getElementById("vehicleType").value;
-    const totalRouteTime = speedOrTime === "routeTime" ? parseFloat(totalRouteTimeInput.value) * 60 : null;
-    const startTime = startTimeInput.value ? new Date(startTimeInput.value) : new Date();
-
-    // Restore original route points — interpolateRoutePoints (from Generate NMEA)
-    // may have replaced them, causing index misalignment with snappedEnvironment.
-    if (routedCoordinates) {
-      conversion.routePoints = routedCoordinates.map(c => ({ lat: c.lat, lon: c.lon, ele: c.ele || 0 }));
-    }
-
-    const physicsEngine = new PhysicsEngine(
-      conversion.routePoints,
-      customization.getVehicleProfile(vehicleType),
-      roadConditionsSelect.value,
-      weatherConditionsSelect.value,
-      driverBehaviorSelect.value,
-      {
-        roadType: roadTypeSelect.value,
-        trafficDensity: trafficDensitySelect.value,
-        snappedEnv: snappedEnvironment,
-      }
-    );
-
-    const processedRoutePoints = speedOrTime === "routeTime"
-      ? physicsEngine.processRoute()
-      : physicsEngine.processRouteWithDynamicSpeed(1);
-
-    // ── Elapsed-time-based animation ──
-    // The physics engine's `elapsed` field (seconds) already encodes
-    // realistic timing: travel time between points plus dwell at stops.
-    // The animation tracks a simulation clock and interpolates position
-    // so marker speed matches the HUD speed exactly.
-    const totalSimTime = processedRoutePoints[processedRoutePoints.length - 1].elapsed;
-    // Optional time scaling when user specified a total route time
-    const timeScale = (totalRouteTime && totalSimTime > 0)
-      ? totalRouteTime / totalSimTime : 1;
-
-    animationIndex = 0;
-    if (!animationMarker) {
-      animationMarker = L.marker([processedRoutePoints[0].lat, processedRoutePoints[0].lon]).addTo(visualization.markerLayer);
-    } else {
-      animationMarker.setLatLng([processedRoutePoints[0].lat, processedRoutePoints[0].lon]);
-    }
-
-    let lastTimestamp = null;
-    let simulationClock = 0;   // seconds of simulation time elapsed
-    let lastStopBadge = false; // track stop badge state for toggling
-
-    function animate(timestamp) {
-      if (animationState !== "playing") return;
-      if (lastTimestamp === null) lastTimestamp = timestamp;
-      const delta = timestamp - lastTimestamp;  // ms
-      lastTimestamp = timestamp;
-
-      // Advance simulation clock (real-time × playback rate / time scale)
-      simulationClock += (delta / 1000) * animationPlaybackRate / timeScale;
-
-      // Advance animationIndex to the last point whose elapsed ≤ simulationClock
-      while (animationIndex < processedRoutePoints.length - 1 &&
-             processedRoutePoints[animationIndex + 1].elapsed <= simulationClock) {
-        animationIndex++;
-      }
-
-      const pt  = processedRoutePoints[animationIndex];
-      const ni  = Math.min(animationIndex + 1, processedRoutePoints.length - 1);
-      const npt = processedRoutePoints[ni];
-
-      // ── Smooth interpolation between current and next point ──
-      let lat = pt.lat, lon = pt.lon;
-      let speed = pt.speed, bearing = pt.bearing;
-      if (animationIndex < processedRoutePoints.length - 1) {
-        const span = npt.elapsed - pt.elapsed;
-        if (span > 0.001) {
-          const frac = Math.max(0, Math.min((simulationClock - pt.elapsed) / span, 1));
-          lat  = pt.lat  + frac * (npt.lat  - pt.lat);
-          lon  = pt.lon  + frac * (npt.lon  - pt.lon);
-          speed   = pt.speed   + frac * (npt.speed   - pt.speed);
-          bearing = pt.bearing + frac * (npt.bearing - pt.bearing);
-        }
-      }
-
-      animationMarker.setLatLng([lat, lon]);
-      if (!visualization.map.getBounds().pad(-0.2).contains(animationMarker.getLatLng())) {
-        visualization.map.panTo([lat, lon]);
-      }
-
-      // ── HUD updates ──
-      speedDisplay.textContent = `${speed.toFixed(1)} km/h`;
-      bearingDisplay.textContent = `${(bearing || 0).toFixed(1)}°`;
-      timeDisplay.textContent = new Date(startTime.getTime() + simulationClock * 1000).toLocaleTimeString();
-      if (speedLimitDisplay) speedLimitDisplay.textContent = pt.speedLimit ? `${Math.round(pt.speedLimit)} km/h` : '—';
-      if (roadNameDisplay) roadNameDisplay.textContent = pt.roadName || '—';
-      if (roadTypeDisplay) {
-        const rt = pt.roadType;
-        const src = pt.roadSource;
-        const icon = src === "overpass" ? "🛰️" : src === "osrm" ? "📡" : "📐";
-        roadTypeDisplay.textContent = rt ? `${icon} ${rt.charAt(0).toUpperCase() + rt.slice(1)}` : '—';
-      }
-
-      // ── Stop indicator (dwell is handled naturally by elapsed gap) ──
-      if (stopIndicator) {
-        if (pt.isStop) {
-          if (!lastStopBadge) {
-            stopIndicator.classList.remove('hud-stop-hidden');
-            stopIndicator.classList.add('hud-stop-visible');
-            if (stopIcon) stopIcon.textContent = pt.stopType === 'trafficLight' ? '🚥' : '🛑';
-            if (stopLabel) {
-              const dwellSec = pt.stopDwell ? Math.round(pt.stopDwell) : '';
-              stopLabel.textContent = pt.stopType === 'trafficLight'
-                ? `Red Light${dwellSec ? ' ' + dwellSec + 's' : ''}`
-                : `Stop Sign${dwellSec ? ' ' + dwellSec + 's' : ''}`;
-            }
-            lastStopBadge = true;
-          }
-        } else {
-          if (lastStopBadge) {
-            stopIndicator.classList.remove('hud-stop-visible');
-            stopIndicator.classList.add('hud-stop-hidden');
-            lastStopBadge = false;
-          }
-        }
-      }
-
-      // ── Continue or finish ──
-      if (simulationClock < totalSimTime) {
-        animationFrameId = requestAnimationFrame(animate);
-      } else {
-        animationState = "stopped";
-        animationIndex = 0;
-        if (animationMarker) { visualization.markerLayer.removeLayer(animationMarker); animationMarker = null; }
-      }
-    }
-
-    animationFrameId = requestAnimationFrame(animate);
+    _runAnimationLoop(savedProcessedPoints, savedTotalSimTime, savedTimeScale, savedStartTime, savedSimulationClock);
+    return;
   }
+
+  if (animationState === "playing") return;
+
+  // ── FRESH START ──
+  animationState = "playing";
+  const speedOrTime = document.getElementById("speedOrTime").value;
+  const vehicleType = document.getElementById("vehicleType").value;
+  const totalRouteTime = speedOrTime === "routeTime" ? parseFloat(totalRouteTimeInput.value) * 60 : null;
+  const startTime = startTimeInput.value ? new Date(startTimeInput.value) : new Date();
+
+  // Restore original route points
+  if (routedCoordinates) {
+    conversion.routePoints = routedCoordinates.map(c => ({ lat: c.lat, lon: c.lon, ele: c.ele || 0 }));
+  }
+
+  const physicsEngine = new PhysicsEngine(
+    conversion.routePoints,
+    customization.getVehicleProfile(vehicleType),
+    roadConditionsSelect.value,
+    weatherConditionsSelect.value,
+    driverBehaviorSelect.value,
+    {
+      roadType: roadTypeSelect.value,
+      trafficDensity: trafficDensitySelect.value,
+      snappedEnv: snappedEnvironment,
+    }
+  );
+
+  const processedRoutePoints = speedOrTime === "routeTime"
+    ? physicsEngine.processRoute()
+    : physicsEngine.processRouteWithDynamicSpeed(1);
+
+  const totalSimTime = processedRoutePoints[processedRoutePoints.length - 1].elapsed;
+  const timeScale = (totalRouteTime && totalSimTime > 0)
+    ? totalRouteTime / totalSimTime : 1;
+
+  // Save for pause/resume and scrub
+  savedProcessedPoints = processedRoutePoints;
+  savedTotalSimTime    = totalSimTime;
+  savedTimeScale       = timeScale;
+  savedStartTime       = startTime;
+  savedSimulationClock = 0;
+  cachedProcessedRoutePoints = processedRoutePoints;
+
+  animationIndex = 0;
+  if (!animationMarker) {
+    animationMarker = L.marker([processedRoutePoints[0].lat, processedRoutePoints[0].lon]).addTo(visualization.markerLayer);
+  } else {
+    animationMarker.setLatLng([processedRoutePoints[0].lat, processedRoutePoints[0].lon]);
+  }
+
+  // Show scrub bar
+  showScrubBar(totalSimTime * timeScale);
+
+  // Render profile chart if not already shown
+  if (processedRoutePoints.length > 2) renderProfileChart(processedRoutePoints);
+
+  _runAnimationLoop(processedRoutePoints, totalSimTime, timeScale, startTime, 0);
+}
+
+function _runAnimationLoop(processedRoutePoints, totalSimTime, timeScale, startTime, startClock) {
+  let lastTimestamp = null;
+  let simulationClock = startClock;
+  let lastStopBadge = false;
+
+  function animate(timestamp) {
+    if (animationState !== "playing") return;
+    if (lastTimestamp === null) lastTimestamp = timestamp;
+    const delta = timestamp - lastTimestamp;
+    lastTimestamp = timestamp;
+
+    simulationClock += (delta / 1000) * animationPlaybackRate / timeScale;
+    savedSimulationClock = simulationClock;
+
+    while (animationIndex < processedRoutePoints.length - 1 &&
+           processedRoutePoints[animationIndex + 1].elapsed <= simulationClock) {
+      animationIndex++;
+    }
+
+    const pt  = processedRoutePoints[animationIndex];
+    const ni  = Math.min(animationIndex + 1, processedRoutePoints.length - 1);
+    const npt = processedRoutePoints[ni];
+
+    let lat = pt.lat, lon = pt.lon;
+    let speed = pt.speed, bearing = pt.bearing;
+    if (animationIndex < processedRoutePoints.length - 1) {
+      const span = npt.elapsed - pt.elapsed;
+      if (span > 0.001) {
+        const frac = Math.max(0, Math.min((simulationClock - pt.elapsed) / span, 1));
+        lat  = pt.lat  + frac * (npt.lat  - pt.lat);
+        lon  = pt.lon  + frac * (npt.lon  - pt.lon);
+        speed   = pt.speed   + frac * (npt.speed   - pt.speed);
+        bearing = pt.bearing + frac * (npt.bearing - pt.bearing);
+      }
+    }
+
+    animationMarker.setLatLng([lat, lon]);
+    if (!visualization.map.getBounds().pad(-0.2).contains(animationMarker.getLatLng())) {
+      visualization.map.panTo([lat, lon]);
+    }
+
+    // HUD updates
+    speedDisplay.textContent = `${speed.toFixed(1)} km/h`;
+    bearingDisplay.textContent = `${(bearing || 0).toFixed(1)}°`;
+    timeDisplay.textContent = new Date(startTime.getTime() + simulationClock * timeScale * 1000).toLocaleTimeString();
+    if (speedLimitDisplay) speedLimitDisplay.textContent = pt.speedLimit ? `${Math.round(pt.speedLimit)} km/h` : '—';
+    if (roadNameDisplay) roadNameDisplay.textContent = pt.roadName || '—';
+    if (roadTypeDisplay) {
+      const rt = pt.roadType;
+      const src = pt.roadSource;
+      const icon = src === "overpass" ? "🛰️" : src === "osrm" ? "📡" : "📐";
+      roadTypeDisplay.textContent = rt ? `${icon} ${rt.charAt(0).toUpperCase() + rt.slice(1)}` : '—';
+    }
+
+    // Stop indicator
+    if (stopIndicator) {
+      if (pt.isStop) {
+        if (!lastStopBadge) {
+          stopIndicator.classList.remove('hud-stop-hidden');
+          stopIndicator.classList.add('hud-stop-visible');
+          if (stopIcon) stopIcon.textContent = pt.stopType === 'trafficLight' ? '🚥' : '🛑';
+          if (stopLabel) {
+            const dwellSec = pt.stopDwell ? Math.round(pt.stopDwell) : '';
+            stopLabel.textContent = pt.stopType === 'trafficLight'
+              ? `Red Light${dwellSec ? ' ' + dwellSec + 's' : ''}`
+              : `Stop Sign${dwellSec ? ' ' + dwellSec + 's' : ''}`;
+          }
+          lastStopBadge = true;
+        }
+      } else {
+        if (lastStopBadge) {
+          stopIndicator.classList.remove('hud-stop-visible');
+          stopIndicator.classList.add('hud-stop-hidden');
+          lastStopBadge = false;
+        }
+      }
+    }
+
+    // Scrub bar update
+    updateScrubBar(simulationClock * timeScale, totalSimTime * timeScale);
+
+    // Continue or finish
+    if (simulationClock < totalSimTime) {
+      animationFrameId = requestAnimationFrame(animate);
+    } else {
+      animationState = "stopped";
+      animationIndex = 0;
+      savedProcessedPoints = null;
+      if (animationMarker) { visualization.markerLayer.removeLayer(animationMarker); animationMarker = null; }
+      if (scrubContainer) scrubContainer.classList.add("hidden");
+    }
+  }
+
+  animationFrameId = requestAnimationFrame(animate);
 }
 
 function handlePause() {
@@ -767,12 +1085,30 @@ function handleStop() {
   if (animationState === "playing" || animationState === "paused") {
     animationState = "stopped";
     animationIndex = 0;
+    savedProcessedPoints = null;
+    savedSimulationClock = 0;
     if (animationFrameId) { cancelAnimationFrame(animationFrameId); animationFrameId = null; }
     if (animationMarker) { visualization.markerLayer.removeLayer(animationMarker); animationMarker = null; }
-    visualization.markerLayer.clearLayers();
+    if (visualization) visualization.markerLayer.clearLayers();
+    if (scrubContainer) scrubContainer.classList.add("hidden");
   }
 }
 
 function handleAnimationPlaybackRateChange() {
   animationPlaybackRate = parseFloat(animationPlaybackRateInput.value);
+}
+
+// ═══════════════════════════════════════════
+//   ELEVATION FETCH FOR ROUTING
+// ═══════════════════════════════════════════
+
+/** Fetch elevation data after routing, if enabled. */
+async function fetchRouteElevation(coords) {
+  if (!elevationCheckbox || !elevationCheckbox.checked) return;
+  try {
+    showRouteStatus('<i class="fas fa-mountain-sun"></i> Fetching elevation…', "loading");
+    await elevationService.fetchElevations(coords);
+  } catch (e) {
+    console.warn("Elevation fetch failed:", e);
+  }
 }

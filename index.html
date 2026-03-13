@@ -394,6 +394,54 @@
         </div>
       </div>
 
+      <!-- Realism / Export Mode -->
+      <div class="panel" data-panel="realism">
+        <button class="panel-header" aria-expanded="false">
+          <span><i class="fas fa-satellite"></i> Realism &amp; Export</span>
+          <i class="fas fa-chevron-down panel-chevron"></i>
+        </button>
+        <div class="panel-body">
+          <div class="form-group">
+            <label>Export Format</label>
+            <div class="chip-group" data-for="exportMode">
+              <button class="chip active" data-value="standard"><i class="fas fa-satellite-dish"></i> Standard NMEA</button>
+              <button class="chip" data-value="hackrf"><i class="fas fa-broadcast-tower"></i> HackRF</button>
+            </div>
+            <select id="exportMode" class="hidden-select">
+              <option value="standard" selected>Standard NMEA</option>
+              <option value="hackrf">HackRF</option>
+            </select>
+            <p class="hint"><strong>Standard</strong>: multi-sentence (GGA+RMC+VTG+GSA+GSV), proper DDMM.MMMMM format, noise &amp; satellites.<br><strong>HackRF</strong>: clean GGA only for gps-sdr-sim.</p>
+          </div>
+          <div class="form-group">
+            <label class="toggle-label">
+              <input type="checkbox" id="gpsNoiseEnabled" checked />
+              <span>GPS Position Noise</span>
+            </label>
+            <p class="hint">Adds ±2–5 m Gaussian jitter to lat/lon — mimics real GPS accuracy.</p>
+          </div>
+          <div class="form-group">
+            <label for="gpsNoiseLevel">Noise σ <span class="unit">(m)</span>: <span id="noiseLevelValue" class="accent">2.5</span></label>
+            <input type="range" id="gpsNoiseLevel" min="0.5" max="10" step="0.5" value="2.5" />
+            <div class="range-labels"><span>0.5 m</span><span>10 m</span></div>
+          </div>
+          <div class="form-group">
+            <label class="toggle-label">
+              <input type="checkbox" id="satelliteSimEnabled" checked />
+              <span>Satellite Constellation</span>
+            </label>
+            <p class="hint">Simulates 8–12 GPS satellites with varying signal strength, HDOP, and DOP values. Adds GSA/GSV sentences.</p>
+          </div>
+          <div class="form-group">
+            <label class="toggle-label">
+              <input type="checkbox" id="elevationEnabled" checked />
+              <span>Real Elevation (SRTM)</span>
+            </label>
+            <p class="hint">Fetches real-world elevation data from Open-Elevation API. Enables hill physics, grade-limited speeds, and altitude in NMEA.</p>
+          </div>
+        </div>
+      </div>
+
       <!-- Simulate & Export actions -->
       <div class="sidebar-actions">
         <button id="generateNMEA" class="btn btn-primary btn-lg">
@@ -405,6 +453,9 @@
         <div class="btn-row">
           <button id="downloadNMEA" class="btn btn-secondary" disabled>
             <i class="fas fa-download"></i> NMEA
+          </button>
+          <button id="downloadGPX" class="btn btn-secondary" disabled>
+            <i class="fas fa-map-location-dot"></i> GPX
           </button>
           <button id="downloadCSV" class="btn btn-secondary" disabled>
             <i class="fas fa-file-csv"></i> CSV
@@ -421,6 +472,12 @@
 
   <!-- Map -->
   <div id="map" class="map"></div>
+
+  <!-- Route Profile Chart -->
+  <div id="profileContainer" class="profile-container hidden">
+    <canvas id="profileChart"></canvas>
+    <div id="profileTooltip" class="profile-tooltip hidden"></div>
+  </div>
 
   <!-- HUD Overlay -->
   <div id="hud">
@@ -459,10 +516,17 @@
   </div>
 
   <!-- Transport Controls -->
-  <div id="control-buttons">
-    <button id="stop" class="control-button" title="Stop"><i class="fas fa-stop"></i></button>
-    <button id="play" class="control-button control-play" title="Play"><i class="fas fa-play"></i></button>
-    <button id="pause" class="control-button" title="Pause"><i class="fas fa-pause"></i></button>
+  <div id="transport-bar">
+    <div id="control-buttons">
+      <button id="stop" class="control-button" title="Stop"><i class="fas fa-stop"></i></button>
+      <button id="play" class="control-button control-play" title="Play"><i class="fas fa-play"></i></button>
+      <button id="pause" class="control-button" title="Pause"><i class="fas fa-pause"></i></button>
+    </div>
+    <div id="scrubContainer" class="scrub-container hidden">
+      <span id="scrubTime" class="scrub-time">0:00</span>
+      <input type="range" id="scrubBar" class="scrub-bar" min="0" max="1000" value="0" step="1" />
+      <span id="scrubTotal" class="scrub-time">0:00</span>
+    </div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
@@ -472,6 +536,8 @@
   <script src="js/physics_engine.js"></script>
   <script src="js/route_planner.js"></script>
   <script src="js/integration.js"></script>
+  <script src="js/nmea_generator.js"></script>
+  <script src="js/elevation_service.js"></script>
   <script src="js/visualization.js"></script>
   <script src="js/app.js"></script>
 </body>
