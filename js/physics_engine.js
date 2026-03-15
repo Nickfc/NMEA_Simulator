@@ -113,6 +113,7 @@ class PhysicsEngine {
     this._powerTractionAccel();      // 10
     this._forwardSweep();            // 11
     this._backwardSweep();           // 12
+    this._smoothStopRamps();         // 12b ★ smooth braking/accel around stops
     this._applyConditions();         // 13
     this._postConditionSweeps();     // 14
     this._jerkLimitPass();           // 15
@@ -692,6 +693,52 @@ class PhysicsEngine {
 
       const vReachable = Math.sqrt(vNext * vNext + 2 * bEff * d);
       this.pts[i].speed = Math.min(this.pts[i].speed, vReachable);
+    }
+  }
+
+  /* ═══════════════════════════════════════════
+     PASS 12b – Explicit braking / acceleration ramps at stops
+     ═══════════════════════════════════════════
+     The kinematic sweeps (11/12) should handle this, but in practice
+     the interaction with min-speed enforcement and jerk limiting can
+     create abrupt drops near stops.  This pass explicitly carves a
+     smooth v²=v₀²+2·a·d deceleration zone before each stop and a
+     matching acceleration zone after.
+  */
+  _smoothStopRamps() {
+    if (!this._isStop) return;
+    const n = this.pts.length;
+
+    // Comfortable braking deceleration for the approach
+    const bComfort = Math.min(this.bMax * 0.75, 3.5);  // m/s² — gentle but firm
+    // Acceleration out of a stop
+    const aComfort = Math.min(this.aMax * 0.8, 2.0);   // m/s²
+
+    for (let si = 0; si < n; si++) {
+      if (!this._isStop[si]) continue;
+
+      // ── Approach ramp (backward from stop) ──
+      // Walk backwards from the stop, enforcing v² = 2·b·d
+      // where d = distance from the stop point
+      let accumDist = 0;
+      for (let i = si - 1; i >= 0; i--) {
+        accumDist += this.segDist[i + 1];
+        const vMax = Math.sqrt(2 * bComfort * accumDist);
+        if (this.pts[i].speed <= vMax) break;  // existing speed is already below ramp
+        // Don't touch other stop points
+        if (this._isStop[i]) break;
+        this.pts[i].speed = Math.min(this.pts[i].speed, vMax);
+      }
+
+      // ── Departure ramp (forward from stop) ──
+      accumDist = 0;
+      for (let i = si + 1; i < n; i++) {
+        accumDist += this.segDist[i];
+        const vMax = Math.sqrt(2 * aComfort * accumDist);
+        if (this.pts[i].speed <= vMax) break;
+        if (this._isStop[i]) break;
+        this.pts[i].speed = Math.min(this.pts[i].speed, vMax);
+      }
     }
   }
 

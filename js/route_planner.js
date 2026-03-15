@@ -319,7 +319,7 @@ class RoutePlanner {
       // Traffic signals → segment-based snap within 30 m
       if (ov.trafficSignals) {
         for (const ts of ov.trafficSignals) {
-          const idx = RoutePlanner._findBestStopIndex(coordinates, ts.lat, ts.lon, 30);
+          const idx = RoutePlanner._findBestStopIndex(coordinates, ts.lat, ts.lon, 40);
           if (idx >= 0) {
             result.trafficSignals[idx] = 1;
             result.signalCoords[idx] = { lat: ts.lat, lon: ts.lon };
@@ -330,7 +330,7 @@ class RoutePlanner {
       // Stop signs → segment-based snap within 25 m
       if (ov.stopSigns) {
         for (const ss of ov.stopSigns) {
-          const idx = RoutePlanner._findBestStopIndex(coordinates, ss.lat, ss.lon, 25);
+          const idx = RoutePlanner._findBestStopIndex(coordinates, ss.lat, ss.lon, 35);
           if (idx >= 0) {
             result.stopSigns[idx] = 1;
             result.stopCoords[idx] = { lat: ss.lat, lon: ss.lon };
@@ -440,10 +440,12 @@ class RoutePlanner {
   /**
    * Segment-based snap for traffic features.
    * Finds the route segment closest to (lat, lon) and returns
-   * the route point index that places the stop closest to the
-   * feature while preferring the approach side (just before).
+   * the route point index that is the approach-side endpoint,
+   * i.e. the last route point the vehicle passes BEFORE
+   * reaching the actual stop/signal.  This ensures the vehicle
+   * stops right at (or just before) the intersection, not 50-100 m early.
    */
-  static _findBestStopIndex(coords, lat, lon, maxDist = 30) {
+  static _findBestStopIndex(coords, lat, lon, maxDist = 40) {
     const n = coords.length;
     if (n < 2) return RoutePlanner._nearestPointIndex(coords, lat, lon, maxDist);
 
@@ -467,13 +469,31 @@ class RoutePlanner {
 
     if (bestSegIdx < 0) return -1;
 
-    // The signal projects onto segment [bestSegIdx, bestSegIdx+1] at t.
-    // Pick the endpoint that is closer to the projection.
-    // This minimises the visual gap between the stop and the signal marker.
-    if (bestT > 0.5 && bestSegIdx + 1 < n) {
-      return bestSegIdx + 1;
+    // The signal projects onto segment [bestSegIdx, bestSegIdx+1] at parameter t.
+    // We want the route point closest to the projection but on the approach side.
+    //
+    // If t >= 0.3 the projection is past the start of the segment →
+    //   use the END of this segment (bestSegIdx+1) — the vehicle will
+    //   be nearly at the intersection when it reaches this point.
+    //
+    // If t < 0.3 the stop is very near the start of the segment →
+    //   use bestSegIdx (vehicle reaches it just before the stop).
+    //
+    // Then scan ±2 neighbours and pick the one whose haversine distance
+    // to the actual signal/stop is smallest, so we always land as close
+    // as possible to the real-world feature.
+    const anchor = (bestT >= 0.3 && bestSegIdx + 1 < n) ? bestSegIdx + 1 : bestSegIdx;
+
+    // Refine: check a small window around the anchor
+    let bestIdx = anchor;
+    let bestDist = GeoUtils.haversineDistance(coords[anchor], { lat, lon });
+    const lo = Math.max(0, anchor - 2);
+    const hi = Math.min(n - 1, anchor + 2);
+    for (let i = lo; i <= hi; i++) {
+      const d = GeoUtils.haversineDistance(coords[i], { lat, lon });
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
     }
-    return bestSegIdx;
+    return bestIdx;
   }
 
   /**

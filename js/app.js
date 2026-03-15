@@ -1007,6 +1007,8 @@ function handlePlay() {
   _lastGaugeSpeed = 0;
   _lastGaugeBearing = processedRoutePoints[0].bearing || 0;
   _lastGaugeClock = 0;
+  _smoothLonG = 0;
+  _smoothLatG = 0;
 
   _runAnimationLoop(processedRoutePoints, totalSimTime, timeScale, startTime, 0);
 }
@@ -1144,14 +1146,19 @@ let _lastGaugeSpeed = 0;
 let _lastGaugeBearing = 0;
 let _lastGaugeClock = 0;
 
+// EMA-smoothed G values – prevents flickering between segments
+let _smoothLonG = 0;
+let _smoothLatG = 0;
+const G_SMOOTH_UP   = 0.25;  // fast rise (feel the force quickly)
+const G_SMOOTH_DOWN = 0.08;  // slow decay (hold the reading briefly)
+
 function updateGaugeBars(speed, pt, npt, simClock) {
-  const maxDisplaySpeed = Math.max(pt.speedLimit || 120, 160); // scale bar to expected max
+  const maxDisplaySpeed = Math.max(pt.speedLimit || 120, 160);
 
   // ── Speed gauge ──
   if (speedGaugeFill && speedGaugeRow && !speedGaugeRow.classList.contains("disabled")) {
     const pct = Math.min(speed / maxDisplaySpeed * 100, 100);
     speedGaugeFill.style.width = pct + "%";
-    // Shift gradient so colour matches speed range
     speedGaugeFill.style.backgroundPosition = (pct * 2) + "% 0";
     if (speedGaugeValue) speedGaugeValue.textContent = Math.round(speed);
   }
@@ -1161,34 +1168,41 @@ function updateGaugeBars(speed, pt, npt, simClock) {
     const G = 9.80665;
     const dt = simClock - _lastGaugeClock;
 
-    // Longitudinal G: acceleration between consecutive points
-    let lonG = 0;
-    if (dt > 0.01) {
-      const dv = (speed - _lastGaugeSpeed) / 3.6; // km/h → m/s
-      lonG = (dv / dt) / G;
+    // Raw longitudinal G from speed delta
+    let rawLonG = 0;
+    if (dt > 0.005 && dt < 2) {
+      const dv = (speed - _lastGaugeSpeed) / 3.6;
+      rawLonG = (dv / dt) / G;
     }
-    // Clamp to ±1.5 g for display
-    lonG = Math.max(-1.5, Math.min(1.5, lonG));
+    rawLonG = Math.max(-1.5, Math.min(1.5, rawLonG));
 
-    // Lateral G: v²·κ / G  where κ = Δheading / distance
-    let latG = 0;
-    if (dt > 0.01 && speed > 2) {
+    // Raw lateral G from heading rate
+    let rawLatG = 0;
+    if (dt > 0.005 && dt < 2 && speed > 3) {
       let dBearing = (pt.bearing || 0) - _lastGaugeBearing;
-      // Normalize to -180..180
       if (dBearing > 180) dBearing -= 360;
       if (dBearing < -180) dBearing += 360;
-      const headingRate = (dBearing * Math.PI / 180) / dt; // rad/s
-      const v = speed / 3.6; // m/s
-      latG = (v * headingRate) / G;
+      const headingRate = (dBearing * Math.PI / 180) / dt;
+      const v = speed / 3.6;
+      rawLatG = (v * headingRate) / G;
     }
-    latG = Math.max(-1.5, Math.min(1.5, latG));
+    rawLatG = Math.max(-1.5, Math.min(1.5, rawLatG));
 
-    const totalG = Math.sqrt(lonG * lonG + latG * latG);
+    // EMA smoothing — rise fast, decay slow ("hold" effect)
+    const lonAlpha = Math.abs(rawLonG) > Math.abs(_smoothLonG) ? G_SMOOTH_UP : G_SMOOTH_DOWN;
+    const latAlpha = Math.abs(rawLatG) > Math.abs(_smoothLatG) ? G_SMOOTH_UP : G_SMOOTH_DOWN;
+    _smoothLonG = _smoothLonG + lonAlpha * (rawLonG - _smoothLonG);
+    _smoothLatG = _smoothLatG + latAlpha * (rawLatG - _smoothLatG);
 
-    // Lateral bar: left half for negative, right half for positive
-    // Each side is 0-50% of the track width
-    const latPct = Math.min(Math.abs(latG) / 1.0 * 50, 50); // 1g = full half
-    if (latG >= 0) {
+    // Dead-zone: zero out tiny residuals
+    if (Math.abs(_smoothLonG) < 0.01) _smoothLonG = 0;
+    if (Math.abs(_smoothLatG) < 0.01) _smoothLatG = 0;
+
+    const totalG = Math.sqrt(_smoothLonG * _smoothLonG + _smoothLatG * _smoothLatG);
+
+    // Lateral bar: left/right from center
+    const latPct = Math.min(Math.abs(_smoothLatG) / 1.0 * 50, 50);
+    if (_smoothLatG >= 0) {
       gForceFillLat.style.width = "0%";
       gForceFillLat.style.left = "50%";
       gForceFillLon.style.width = latPct + "%";
@@ -1203,15 +1217,15 @@ function updateGaugeBars(speed, pt, npt, simClock) {
       gForceFillLat.style.borderRadius = "3px 0 0 3px";
     }
 
-    // Longitudinal component: tint bar colour based on braking vs accel
-    const lonPct = Math.min(Math.abs(lonG) / 1.0 * 50, 50);
-    if (lonG < -0.15) {
-      // Braking – overlay red tint
-      gForceFillLon.style.background = `rgba(248,113,113,${Math.min(Math.abs(lonG), 0.9)})`;
-      gForceFillLat.style.background = `rgba(248,113,113,${Math.min(Math.abs(lonG), 0.9)})`;
-    } else if (lonG > 0.1) {
-      gForceFillLon.style.background = `rgba(52,211,153,${Math.min(lonG, 0.9)})`;
-      gForceFillLat.style.background = `rgba(52,211,153,${Math.min(lonG, 0.9)})`;
+    // Colour tint: braking=red, accel=green, neutral=default
+    if (_smoothLonG < -0.12) {
+      const a = Math.min(Math.abs(_smoothLonG) * 0.8 + 0.2, 0.9);
+      gForceFillLon.style.background = `rgba(248,113,113,${a})`;
+      gForceFillLat.style.background = `rgba(248,113,113,${a})`;
+    } else if (_smoothLonG > 0.08) {
+      const a = Math.min(_smoothLonG * 0.8 + 0.2, 0.9);
+      gForceFillLon.style.background = `rgba(52,211,153,${a})`;
+      gForceFillLat.style.background = `rgba(52,211,153,${a})`;
     } else {
       gForceFillLon.style.background = "rgba(79,140,255,0.7)";
       gForceFillLat.style.background = "rgba(251,191,36,0.7)";
