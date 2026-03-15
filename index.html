@@ -527,6 +527,28 @@
       <input type="range" id="scrubBar" class="scrub-bar" min="0" max="1000" value="0" step="1" />
       <span id="scrubTotal" class="scrub-time">0:00</span>
     </div>
+    <div id="gaugeContainer" class="gauge-container hidden">
+      <div class="gauge-row" id="speedGaugeRow">
+        <button class="gauge-toggle active" id="speedGaugeToggle" title="Toggle speed bar"><i class="fas fa-gauge-high"></i></button>
+        <span class="gauge-label">SPD</span>
+        <div class="gauge-track">
+          <div class="gauge-fill gauge-fill-speed" id="speedGaugeFill"></div>
+        </div>
+        <span class="gauge-value" id="speedGaugeValue">0</span>
+        <span class="gauge-unit">km/h</span>
+      </div>
+      <div class="gauge-row" id="gForceGaugeRow">
+        <button class="gauge-toggle active" id="gForceGaugeToggle" title="Toggle g-force bar"><i class="fas fa-arrows-up-down-left-right"></i></button>
+        <span class="gauge-label">G</span>
+        <div class="gauge-track">
+          <div class="gauge-fill gauge-fill-lat" id="gForceFillLat"></div>
+          <div class="gauge-fill gauge-fill-lon" id="gForceFillLon"></div>
+          <div class="gauge-center-mark"></div>
+        </div>
+        <span class="gauge-value" id="gForceGaugeValue">0.00</span>
+        <span class="gauge-unit">g</span>
+      </div>
+    </div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>

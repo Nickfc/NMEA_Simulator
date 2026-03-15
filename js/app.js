@@ -82,6 +82,18 @@ const profileContainer         = document.getElementById("profileContainer");
 const profileCanvas            = document.getElementById("profileChart");
 const profileTooltip           = document.getElementById("profileTooltip");
 
+// ── Gauge bar refs ──
+const gaugeContainer           = document.getElementById("gaugeContainer");
+const speedGaugeFill           = document.getElementById("speedGaugeFill");
+const speedGaugeValue          = document.getElementById("speedGaugeValue");
+const speedGaugeToggle         = document.getElementById("speedGaugeToggle");
+const speedGaugeRow            = document.getElementById("speedGaugeRow");
+const gForceFillLat            = document.getElementById("gForceFillLat");
+const gForceFillLon            = document.getElementById("gForceFillLon");
+const gForceGaugeValue         = document.getElementById("gForceGaugeValue");
+const gForceGaugeToggle        = document.getElementById("gForceGaugeToggle");
+const gForceGaugeRow           = document.getElementById("gForceGaugeRow");
+
 // ── Core objects ──
 const conversion    = new Conversion();
 const customization = new Customization();
@@ -168,6 +180,20 @@ if (scrubBar) {
     handleScrub(parseInt(scrubBar.value, 10));
   });
   scrubBar.addEventListener("change", () => { scrubbing = false; });
+}
+
+// ── Gauge toggle listeners ──
+if (speedGaugeToggle) {
+  speedGaugeToggle.addEventListener("click", () => {
+    speedGaugeToggle.classList.toggle("active");
+    speedGaugeRow.classList.toggle("disabled", !speedGaugeToggle.classList.contains("active"));
+  });
+}
+if (gForceGaugeToggle) {
+  gForceGaugeToggle.addEventListener("click", () => {
+    gForceGaugeToggle.classList.toggle("active");
+    gForceGaugeRow.classList.toggle("disabled", !gForceGaugeToggle.classList.contains("active"));
+  });
 }
 
 // Close search results when clicking outside
@@ -536,9 +562,10 @@ function handleClearAll() {
   if (stopIndicator) { stopIndicator.classList.remove('hud-stop-visible'); stopIndicator.classList.add('hud-stop-hidden'); }
   document.getElementById("totalDistanceDisplay").textContent = "—";
   document.getElementById("estimatedTimeDisplay").textContent = "—";
-  // Hide profile chart and scrub bar
+  // Hide profile chart, scrub bar, and gauge bars
   if (profileContainer) profileContainer.classList.add("hidden");
   if (scrubContainer) scrubContainer.classList.add("hidden");
+  if (gaugeContainer) gaugeContainer.classList.add("hidden");
 }
 
 async function handleGenerateNMEA() {
@@ -969,11 +996,17 @@ function handlePlay() {
     animationMarker.setLatLng([processedRoutePoints[0].lat, processedRoutePoints[0].lon]);
   }
 
-  // Show scrub bar
-  showScrubBar(totalSimTime * timeScale);
+// Show scrub bar & gauge bars
+    showScrubBar(totalSimTime * timeScale);
+    if (gaugeContainer) gaugeContainer.classList.remove("hidden");
 
   // Render profile chart if not already shown
   if (processedRoutePoints.length > 2) renderProfileChart(processedRoutePoints);
+
+  // Reset gauge state for fresh start
+  _lastGaugeSpeed = 0;
+  _lastGaugeBearing = processedRoutePoints[0].bearing || 0;
+  _lastGaugeClock = 0;
 
   _runAnimationLoop(processedRoutePoints, totalSimTime, timeScale, startTime, 0);
 }
@@ -1059,6 +1092,9 @@ function _runAnimationLoop(processedRoutePoints, totalSimTime, timeScale, startT
     // Scrub bar update
     updateScrubBar(simulationClock * timeScale, totalSimTime * timeScale);
 
+    // Gauge bar updates
+    updateGaugeBars(speed, pt, npt, simulationClock);
+
     // Continue or finish
     if (simulationClock < totalSimTime) {
       animationFrameId = requestAnimationFrame(animate);
@@ -1068,6 +1104,7 @@ function _runAnimationLoop(processedRoutePoints, totalSimTime, timeScale, startT
       savedProcessedPoints = null;
       if (animationMarker) { visualization.markerLayer.removeLayer(animationMarker); animationMarker = null; }
       if (scrubContainer) scrubContainer.classList.add("hidden");
+      if (gaugeContainer) gaugeContainer.classList.add("hidden");
     }
   }
 
@@ -1091,11 +1128,101 @@ function handleStop() {
     if (animationMarker) { visualization.markerLayer.removeLayer(animationMarker); animationMarker = null; }
     if (visualization) visualization.markerLayer.clearLayers();
     if (scrubContainer) scrubContainer.classList.add("hidden");
+    if (gaugeContainer) gaugeContainer.classList.add("hidden");
   }
 }
 
 function handleAnimationPlaybackRateChange() {
   animationPlaybackRate = parseFloat(animationPlaybackRateInput.value);
+}
+
+// ═══════════════════════════════════════════
+//   GAUGE BARS (Speed & G-Force)
+// ═══════════════════════════════════════════
+
+let _lastGaugeSpeed = 0;
+let _lastGaugeBearing = 0;
+let _lastGaugeClock = 0;
+
+function updateGaugeBars(speed, pt, npt, simClock) {
+  const maxDisplaySpeed = Math.max(pt.speedLimit || 120, 160); // scale bar to expected max
+
+  // ── Speed gauge ──
+  if (speedGaugeFill && speedGaugeRow && !speedGaugeRow.classList.contains("disabled")) {
+    const pct = Math.min(speed / maxDisplaySpeed * 100, 100);
+    speedGaugeFill.style.width = pct + "%";
+    // Shift gradient so colour matches speed range
+    speedGaugeFill.style.backgroundPosition = (pct * 2) + "% 0";
+    if (speedGaugeValue) speedGaugeValue.textContent = Math.round(speed);
+  }
+
+  // ── G-Force gauge ──
+  if (gForceFillLat && gForceFillLon && gForceGaugeRow && !gForceGaugeRow.classList.contains("disabled")) {
+    const G = 9.80665;
+    const dt = simClock - _lastGaugeClock;
+
+    // Longitudinal G: acceleration between consecutive points
+    let lonG = 0;
+    if (dt > 0.01) {
+      const dv = (speed - _lastGaugeSpeed) / 3.6; // km/h → m/s
+      lonG = (dv / dt) / G;
+    }
+    // Clamp to ±1.5 g for display
+    lonG = Math.max(-1.5, Math.min(1.5, lonG));
+
+    // Lateral G: v²·κ / G  where κ = Δheading / distance
+    let latG = 0;
+    if (dt > 0.01 && speed > 2) {
+      let dBearing = (pt.bearing || 0) - _lastGaugeBearing;
+      // Normalize to -180..180
+      if (dBearing > 180) dBearing -= 360;
+      if (dBearing < -180) dBearing += 360;
+      const headingRate = (dBearing * Math.PI / 180) / dt; // rad/s
+      const v = speed / 3.6; // m/s
+      latG = (v * headingRate) / G;
+    }
+    latG = Math.max(-1.5, Math.min(1.5, latG));
+
+    const totalG = Math.sqrt(lonG * lonG + latG * latG);
+
+    // Lateral bar: left half for negative, right half for positive
+    // Each side is 0-50% of the track width
+    const latPct = Math.min(Math.abs(latG) / 1.0 * 50, 50); // 1g = full half
+    if (latG >= 0) {
+      gForceFillLat.style.width = "0%";
+      gForceFillLat.style.left = "50%";
+      gForceFillLon.style.width = latPct + "%";
+      gForceFillLon.style.left = "50%";
+      gForceFillLon.style.transform = "none";
+      gForceFillLon.style.borderRadius = "0 3px 3px 0";
+    } else {
+      gForceFillLon.style.width = "0%";
+      gForceFillLat.style.width = latPct + "%";
+      gForceFillLat.style.left = (50 - latPct) + "%";
+      gForceFillLat.style.transform = "none";
+      gForceFillLat.style.borderRadius = "3px 0 0 3px";
+    }
+
+    // Longitudinal component: tint bar colour based on braking vs accel
+    const lonPct = Math.min(Math.abs(lonG) / 1.0 * 50, 50);
+    if (lonG < -0.15) {
+      // Braking – overlay red tint
+      gForceFillLon.style.background = `rgba(248,113,113,${Math.min(Math.abs(lonG), 0.9)})`;
+      gForceFillLat.style.background = `rgba(248,113,113,${Math.min(Math.abs(lonG), 0.9)})`;
+    } else if (lonG > 0.1) {
+      gForceFillLon.style.background = `rgba(52,211,153,${Math.min(lonG, 0.9)})`;
+      gForceFillLat.style.background = `rgba(52,211,153,${Math.min(lonG, 0.9)})`;
+    } else {
+      gForceFillLon.style.background = "rgba(79,140,255,0.7)";
+      gForceFillLat.style.background = "rgba(251,191,36,0.7)";
+    }
+
+    if (gForceGaugeValue) gForceGaugeValue.textContent = totalG.toFixed(2);
+  }
+
+  _lastGaugeSpeed = speed;
+  _lastGaugeBearing = pt.bearing || 0;
+  _lastGaugeClock = simClock;
 }
 
 // ═══════════════════════════════════════════

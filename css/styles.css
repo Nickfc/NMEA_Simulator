@@ -1033,6 +1033,113 @@ body.sidebar-collapsed .map { left: 0; }
   cursor: grab;
 }
 
+/* ---------- Gauge Bars (Speed & G-Force) ---------- */
+.gauge-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(15 17 23 / .75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255 255 255 / .08);
+  border-radius: 14px;
+  padding: 6px 12px;
+  min-width: 340px;
+}
+.gauge-container.hidden { display: none; }
+.gauge-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  transition: opacity .25s ease;
+}
+.gauge-row.disabled { opacity: .25; pointer-events: none; }
+.gauge-toggle {
+  all: unset;
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: .65rem;
+  color: var(--text-dim);
+  background: rgba(255 255 255 / .06);
+  transition: all .2s ease;
+  flex-shrink: 0;
+}
+.gauge-toggle:hover { background: rgba(255 255 255 / .12); color: #fff; }
+.gauge-toggle.active { color: var(--accent); background: rgba(79 140 255 / .15); }
+.gauge-label {
+  font-size: .62rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  width: 24px;
+  text-align: right;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.gauge-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(255 255 255 / .08);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+.gauge-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 3px;
+  transition: width .12s ease, background .3s ease;
+}
+.gauge-fill-speed {
+  background: linear-gradient(90deg, var(--green), #fbbf24, var(--red));
+  background-size: 300% 100%;
+  width: 0%;
+}
+.gauge-fill-lat {
+  background: rgba(251 191 36 / .7);
+  width: 0%;
+  left: 50%;
+  transform: translateX(-100%);
+  border-radius: 3px 0 0 3px;
+}
+.gauge-fill-lon {
+  background: rgba(79 140 255 / .7);
+  width: 0%;
+  left: 50%;
+  border-radius: 0 3px 3px 0;
+}
+.gauge-center-mark {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 100%;
+  background: rgba(255 255 255 / .25);
+  z-index: 2;
+}
+.gauge-value {
+  font-size: .68rem;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+.gauge-unit {
+  font-size: .58rem;
+  color: var(--text-muted);
+  width: 28px;
+}
+
 /* ---------- Route Profile Chart ---------- */
 .profile-container {
   position: absolute;
